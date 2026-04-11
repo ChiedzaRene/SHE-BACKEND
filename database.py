@@ -13,7 +13,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-# Dependency - gives each request its own database session
 def get_db():
     db = SessionLocal()
     try:

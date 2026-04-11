@@ -14,6 +14,10 @@ class Incident(Base):
     severity = Column(String, nullable=False)  # "low", "medium", "high", "critical"
     resolved = Column(Boolean, default=False)
     date_time = Column(DateTime, server_default=func.now())
+    total_hours_worked = Column(Integer) #
+    lost_time_days = Column(Integer, default=0) #days lost due to injury 
+    
+
 
     # Relationships
     site = relationship("Site", back_populates="incidents")

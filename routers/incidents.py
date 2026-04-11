@@ -13,9 +13,60 @@ router = APIRouter(prefix="/incidents", tags=["Incidents"])
 @router.get("/", response_model=List[IncidentResponse])
 def get_all_incidents(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "she_team"))
+    current_user: User = Depends(get_current_user)
 ):
+    if current_user.role == "site_manager":
+        return db.query(Incident).filter(Incident.site_id == current_user.site_id).all()
     return db.query(Incident).all()
+
+# Global metrics - MUST be before /metrics/{site_id}
+@router.get("/metrics/global")
+def get_global_metrics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role == "site_manager":
+        incidents = db.query(Incident).filter(Incident.site_id == current_user.site_id).all()
+        scope = f"site_{current_user.site_id}"
+    else:
+        incidents = db.query(Incident).all()
+        scope = "global"
+
+    total_incidents = len(incidents)
+    lost_time_injuries = sum(1 for i in incidents if i.lost_time_days > 0)
+    total_hours = sum(i.total_hours_worked for i in incidents if i.total_hours_worked)
+    trir = round((total_incidents * 200000) / total_hours, 2) if total_hours > 0 else 0
+    ltifr = round((lost_time_injuries * 1000000) / total_hours, 2) if total_hours > 0 else 0
+    return {
+        "scope": scope,
+        "total_incidents": total_incidents,
+        "lost_time_injuries": lost_time_injuries,
+        "total_hours_worked": total_hours,
+        "trir": trir,
+        "ltifr": ltifr
+    }
+
+# Site metrics - AFTER global
+@router.get("/metrics/{site_id}")
+def get_site_metrics(
+    site_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    incidents = db.query(Incident).filter(Incident.site_id == site_id).all()
+    total_incidents = len(incidents)
+    lost_time_injuries = sum(1 for i in incidents if i.lost_time_days > 0)
+    total_hours = sum(i.total_hours_worked for i in incidents if i.total_hours_worked)
+    trir = round((total_incidents * 200000) / total_hours, 2) if total_hours > 0 else 0
+    ltifr = round((lost_time_injuries * 1000000) / total_hours, 2) if total_hours > 0 else 0
+    return {
+        "site_id": site_id,
+        "total_incidents": total_incidents,
+        "lost_time_injuries": lost_time_injuries,
+        "total_hours_worked": total_hours,
+        "trir": trir,
+        "ltifr": ltifr
+    }
 
 # Get incidents by site
 @router.get("/site/{site_id}", response_model=List[IncidentResponse])
@@ -24,7 +75,6 @@ def get_site_incidents(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Site managers can only see their own site
     if current_user.role == "site_manager" and current_user.site_id != site_id:
         raise HTTPException(status_code=403, detail="Access denied")
     incidents = db.query(Incident).filter(Incident.site_id == site_id).all()
@@ -42,7 +92,7 @@ def get_incident(
         raise HTTPException(status_code=404, detail="Incident not found")
     return incident
 
-# Create incident - any logged in user
+# Create incident
 @router.post("/", response_model=IncidentResponse)
 def create_incident(
     incident_data: IncidentCreate,
@@ -51,7 +101,7 @@ def create_incident(
 ):
     new_incident = Incident(
         **incident_data.model_dump(),
-        user_id=current_user.id  # ← Real user from JWT token!
+        user_id=current_user.id
     )
     db.add(new_incident)
     db.commit()

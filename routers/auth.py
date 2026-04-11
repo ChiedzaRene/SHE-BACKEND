@@ -56,7 +56,8 @@ def login(
     access_token = create_access_token(data={
         "sub": user.email,
         "role": user.role,
-        "user_id": user.id
+        "user_id": user.id,
+        "site_id": user.site_id
     })
 
     return {"access_token": access_token, "token_type": "bearer"}
