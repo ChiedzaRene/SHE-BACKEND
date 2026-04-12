@@ -1,4 +1,3 @@
-# models/training.py
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -12,12 +11,8 @@ class Training(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     training_module = Column(String, nullable=False)
     personnel = Column(String, nullable=False)
-
-    # --- ADD THESE TWO LINES ---
     trainer_name = Column(String, nullable=True)
     trainer_position = Column(String, nullable=True)
-    # ---------------------------
-
     trained_employees = Column(Integer, default=0)
     total_employees = Column(Integer, default=0)
     date = Column(DateTime, server_default=func.now())

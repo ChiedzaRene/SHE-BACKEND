@@ -20,7 +20,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000",
+    allow_origins=["http://localhost:3001",
                    "https://yummy-walls-sell.loca.lt"],
     allow_credentials=True,
     allow_methods=["*"],
