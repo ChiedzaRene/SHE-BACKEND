@@ -20,7 +20,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[""],
+    allow_origins=["http://localhost:3000",
+        "https://rococo-cheesecake-99f5b0.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
