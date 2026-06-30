@@ -24,7 +24,11 @@ class SiteResponse(BaseModel):
     contact_number: Optional[str] = None
 
     class Config:
+<<<<<<< HEAD
         from_attributes = True
 
 
 SiteOut = SiteResponse
+=======
+        from_attributes = True
+>>>>>>> 1407a1a5ec06c717d7b3708ad7ea653135048d5d

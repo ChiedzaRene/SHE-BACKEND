@@ -1,9 +1,15 @@
+<<<<<<< HEAD
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+=======
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+>>>>>>> 1407a1a5ec06c717d7b3708ad7ea653135048d5d
 from database import get_db
 from models.user import User
 from schemas.user import UserCreate, UserResponse, Token
@@ -14,6 +20,7 @@ from services.auth_services import (
     get_user_by_email
 )
 
+<<<<<<< HEAD
 # Rate limiter — keyed by IP address
 limiter = Limiter(key_func=get_remote_address)
 
@@ -23,6 +30,12 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", response_model=UserResponse)
 @limiter.limit("3/minute")  # max 3 registrations per minute per IP
 def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
+=======
+router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+@router.post("/register", response_model=UserResponse)
+def register(user_data: UserCreate, db: Session = Depends(get_db)):
+>>>>>>> 1407a1a5ec06c717d7b3708ad7ea653135048d5d
     existing_user = db.query(User).filter(
         User.email == user_data.email
     ).first()
@@ -46,6 +59,7 @@ def register(request: Request, user_data: UserCreate, db: Session = Depends(get_
     db.refresh(new_user)
     return new_user
 
+<<<<<<< HEAD
 
 @router.post("/login", response_model=Token)
 @limiter.limit("5/minute")  # max 5 login attempts per minute per IP
@@ -54,11 +68,21 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+=======
+@router.post("/login", response_model=Token)
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    # OAuth2PasswordRequestForm uses "username" field
+    # We treat it as email
+>>>>>>> 1407a1a5ec06c717d7b3708ad7ea653135048d5d
     user = authenticate_user(db, form_data.username, form_data.password)
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
+<<<<<<< HEAD
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
@@ -67,6 +91,9 @@ def login(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled. Contact your administrator."
+=======
+            detail="Incorrect email or password"
+>>>>>>> 1407a1a5ec06c717d7b3708ad7ea653135048d5d
         )
 
     access_token = create_access_token(data={
