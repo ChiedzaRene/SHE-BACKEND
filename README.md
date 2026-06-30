@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 ﻿#  SHE Management System - Backend
 
 This is the backend API for the **Safety, Health, and Environment (SHE) Management System**, specifically designed to handle incident reporting, safety audits, and environmental compliance data for the energy and fuel sector.
