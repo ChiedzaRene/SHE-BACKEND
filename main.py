@@ -33,7 +33,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://glowshe.netlify.app/"
+        "https://glowshe.netlify.app",
+        "http://192.168.1.162:3000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
