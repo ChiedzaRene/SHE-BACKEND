@@ -10,7 +10,7 @@ class User(Base):
     password = Column(String, nullable=False)
     full_name = Column(String, nullable=True)
     role = Column(String, nullable=False)  # "admin", "she_team", "site_manager"
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True, server_default='true', nullable=False)
     site_id = Column(Integer, ForeignKey("sites.id"), nullable=True)
 
     # Relationships

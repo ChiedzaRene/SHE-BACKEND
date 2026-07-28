@@ -1,17 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
 from datetime import datetime
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
 
 from database import get_db
 from models.corrective_action import CorrectiveAction
 from models.user import User
 from schemas.corrective_action import (
     CorrectiveActionCreate,
-    CorrectiveActionUpdate,
     CorrectiveActionResolve,
     CorrectiveActionResponse,
+    CorrectiveActionUpdate,
 )
+from services.audit_service import log_action
 from services.auth_services import get_current_user, require_role
 
 router = APIRouter(prefix="/corrective-actions", tags=["Corrective Actions"])
@@ -50,6 +51,7 @@ def get_all_corrective_actions(
         actions = db.query(CorrectiveAction).all()
     return [_to_response(action) for action in actions]
 
+
 @router.get("/incident/{incident_id}", response_model=List[CorrectiveActionResponse])
 def get_incident_corrective_actions(
     incident_id: int,
@@ -59,6 +61,10 @@ def get_incident_corrective_actions(
     actions = db.query(CorrectiveAction).filter(
         CorrectiveAction.incident_id == incident_id
     ).all()
+
+    if current_user.role == "site_manager":
+        actions = [a for a in actions if a.site_id == current_user.site_id]
+
     return [_to_response(action) for action in actions]
 
 
@@ -71,16 +77,22 @@ def get_corrective_action(
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
+    if current_user.role == "site_manager" and action.site_id != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return _to_response(action)
 
 
 @router.post("/", response_model=CorrectiveActionResponse)
 def create_corrective_action(
+    request: Request,
     action_data: CorrectiveActionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     payload = action_data.model_dump(exclude_unset=True)
+    if current_user.role == "site_manager" and payload.get("site_id") != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Cannot assign corrective action to another site")
+
     description = payload.get("description") or payload.get("action_taken")
 
     new_action = CorrectiveAction(
@@ -97,12 +109,22 @@ def create_corrective_action(
     db.add(new_action)
     db.commit()
     db.refresh(new_action)
+
+    log_action(
+        db=db,
+        user=current_user,
+        action="CREATE_CORRECTIVE_ACTION",
+        resource="corrective_actions",
+        resource_id=new_action.id,
+        details=f"Created action item #{new_action.id} for incident #{new_action.incident_id}",
+        ip_address=request.client.host,
+    )
     return _to_response(new_action)
 
 
-# Resolution endpoint
 @router.post("/{action_id}/resolve", response_model=CorrectiveActionResponse)
 def resolve_corrective_action(
+    request: Request,
     action_id: int,
     resolve_data: CorrectiveActionResolve,
     db: Session = Depends(get_db),
@@ -111,6 +133,8 @@ def resolve_corrective_action(
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
+    if current_user.role == "site_manager" and action.site_id != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     action.resolution_notes = resolve_data.resolution_notes
     action.is_successful = resolve_data.is_successful
@@ -120,11 +144,22 @@ def resolve_corrective_action(
 
     db.commit()
     db.refresh(action)
+
+    log_action(
+        db=db,
+        user=current_user,
+        action="RESOLVE_CORRECTIVE_ACTION",
+        resource="corrective_actions",
+        resource_id=action.id,
+        details=f"Resolved action #{action.id} (Success: {resolve_data.is_successful})",
+        ip_address=request.client.host,
+    )
     return _to_response(action)
 
 
 @router.put("/{action_id}", response_model=CorrectiveActionResponse)
 def update_corrective_action(
+    request: Request,
     action_id: int,
     action_data: CorrectiveActionUpdate,
     db: Session = Depends(get_db),
@@ -133,6 +168,8 @@ def update_corrective_action(
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
+    if current_user.role == "site_manager" and action.site_id != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     updates = action_data.model_dump(exclude_unset=True)
     if "description" in updates and "action_taken" not in updates:
@@ -145,11 +182,22 @@ def update_corrective_action(
 
     db.commit()
     db.refresh(action)
+
+    log_action(
+        db=db,
+        user=current_user,
+        action="UPDATE_CORRECTIVE_ACTION",
+        resource="corrective_actions",
+        resource_id=action.id,
+        details=f"Updated corrective action #{action.id}",
+        ip_address=request.client.host,
+    )
     return _to_response(action)
 
 
 @router.delete("/{action_id}")
 def delete_corrective_action(
+    request: Request,
     action_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("admin", "she_team")),
@@ -160,4 +208,14 @@ def delete_corrective_action(
 
     db.delete(action)
     db.commit()
+
+    log_action(
+        db=db,
+        user=current_user,
+        action="DELETE_CORRECTIVE_ACTION",
+        resource="corrective_actions",
+        resource_id=action_id,
+        details=f"Deleted corrective action #{action_id}",
+        ip_address=request.client.host,
+    )
     return {"message": "Corrective action deleted"}

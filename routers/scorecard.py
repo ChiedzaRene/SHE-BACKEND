@@ -13,9 +13,7 @@ from schemas.scorecard import ScorecardCreate, ScorecardOut
 router = APIRouter(prefix="/scorecard", tags=["Scorecard"])
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# GET /scorecard/  — latest submission per site (what ScorecardOverview.js calls)
-# ──────────────────────────────────────────────────────────────────────────────
+
 
 @router.get("/", response_model=List[ScorecardOut])
 def get_all_latest(
@@ -26,11 +24,7 @@ def get_all_latest(
     end_date: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
     db: Session = Depends(get_db),
 ):
-    """
-    Returns the LATEST scorecard submission per site, with site_name and
-    submitted_by_name joined in. Supports all filters used by ScorecardOverview.js.
-    """
-
+   
     # Subquery: latest submitted_at per site_id
     latest_sub = (
         db.query(

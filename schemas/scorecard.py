@@ -1,6 +1,14 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
+import bleach
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+def sanitize_text(value: Optional[str]) -> Optional[str]:
+    """Strips all HTML/script tags from user-provided string inputs."""
+    if isinstance(value, str):
+        return bleach.clean(value, tags=[], strip=True).strip()
+    return value
 
 
 # ──────────────────────────────────────────────
@@ -8,8 +16,13 @@ from datetime import datetime
 # ──────────────────────────────────────────────
 
 class SiteBase(BaseModel):
-    name: str
-    location: Optional[str] = None
+    name: str = Field(..., min_length=2, max_length=150)
+    location: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("name", "location", mode="before")
+    @classmethod
+    def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_text(value)
 
 
 class SiteCreate(SiteBase):
@@ -29,9 +42,17 @@ class SiteOut(SiteBase):
 # ──────────────────────────────────────────────
 
 class UserBase(BaseModel):
-    name: str
-    email: str
-    role: Optional[str] = "she_team"
+    name: str = Field(..., min_length=2, max_length=150)
+    email: EmailStr
+    role: Optional[str] = Field(
+        default="she_team",
+        pattern="^(site_manager|she_team|admin|super_admin)$",
+    )
+
+    @field_validator("name", "role", mode="before")
+    @classmethod
+    def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_text(value)
 
 
 class UserCreate(UserBase):
@@ -51,10 +72,15 @@ class UserOut(UserBase):
 # ──────────────────────────────────────────────
 
 class ScorecardItemCreate(BaseModel):
-    requirement_ref: str
-    requirement_text: Optional[str] = None
-    score: float = Field(..., ge=0, le=5)
-    comments: Optional[str] = None
+    requirement_ref: str = Field(..., min_length=1, max_length=100)
+    requirement_text: Optional[str] = Field(default=None, max_length=1000)
+    score: float = Field(..., ge=0.0, le=5.0, description="Item score between 0 and 5")
+    comments: Optional[str] = Field(default=None, max_length=1500)
+
+    @field_validator("requirement_ref", "requirement_text", "comments", mode="before")
+    @classmethod
+    def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_text(value)
 
 
 class ScorecardItemOut(ScorecardItemCreate):
@@ -70,22 +96,28 @@ class ScorecardItemOut(ScorecardItemCreate):
 # ──────────────────────────────────────────────
 
 class ScorecardCreate(BaseModel):
-    site_id: int
-    submitted_by: int
-    notes: Optional[str] = None
+    site_id: int = Field(..., gt=0, description="Site ID must be a positive integer")
+    submitted_by: int = Field(..., gt=0, description="User ID must be a positive integer")
+    notes: Optional[str] = Field(default=None, max_length=2000)
     items: List[ScorecardItemCreate]
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_text(value)
 
 
 class ScorecardOut(BaseModel):
     """
     Full scorecard with joined site_name and submitted_by_name.
-    This is exactly what ScorecardOverview.js expects.
+    Matches the data structure consumed by ScorecardOverview.js.
     """
+
     id: int
     site_id: int
-    site_name: Optional[str] = None         # joined from sites.name
+    site_name: Optional[str] = None
     submitted_by: int
-    submitted_by_name: Optional[str] = None  # joined from users.name
+    submitted_by_name: Optional[str] = None
     overall_score: float
     overall_percent: float
     notes: Optional[str] = None
