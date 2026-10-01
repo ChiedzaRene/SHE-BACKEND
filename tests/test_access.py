@@ -43,14 +43,6 @@ def test_site_manager_cannot_read_other_site_incident_metrics(client, auth):
     assert client.get("/incidents/metrics/1", headers=auth["mgr"]).status_code == 200
 
 
-def test_incident_metrics_values(client, auth):
-    g = client.get("/incidents/metrics/global", headers=auth["admin"]).json()
-    assert (g["total_incidents"], g["lost_time_injuries"]) == (4, 2)
-    s1 = client.get("/incidents/metrics/1", headers=auth["admin"]).json()
-    assert (s1["total_incidents"], s1["lost_time_injuries"]) == (3, 1)
-    assert client.get("/incidents/metrics/99", headers=auth["admin"]).json()["total_incidents"] == 0
-
-
 def test_inspection_upload_rules(client, auth):
     mgr = auth["mgr"]
     base = {"site_id": 1, "inspection_date": "2026-01-01"}

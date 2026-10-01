@@ -29,12 +29,16 @@ def client():
     db.add_all([
         User(id=1, email="super@x.com", password=hash_password(PASSWORD), role="super_admin"),
         User(id=2, email="admin@x.com", password=hash_password(PASSWORD), role="admin"),
+        User(id=4, email="she@x.com", password=hash_password(PASSWORD), role="she_team"),
         User(id=3, email="mgr@x.com", password=hash_password(PASSWORD), role="site_manager",
              site_id=1, full_name="Manager"),
     ])
     db.commit()
-    for site_id, lost in [(1, 0), (1, 3), (1, None), (2, 5)]:
-        db.add(Incident(site_id=site_id, user_id=1, type="spill", description="d",
+    # Site 1: three injuries (one lost-time) and a spill; Site 2: one lost-time injury
+    for site_id, kind, lost in [
+        (1, "injury", 0), (1, "injury", 3), (1, "injury", None), (1, "spill", 0), (2, "injury", 5),
+    ]:
+        db.add(Incident(site_id=site_id, user_id=1, type=kind, description="d",
                         severity="low", lost_time_days=lost))
     db.commit()
     db.close()
@@ -47,4 +51,4 @@ def auth(client):
         r = client.post("/auth/login", data={"username": email, "password": PASSWORD})
         assert r.status_code == 200, r.text
         return {"Authorization": f"Bearer {r.json()['access_token']}"}
-    return {name: _headers(f"{name}@x.com") for name in ("super", "admin", "mgr")}
+    return {name: _headers(f"{name}@x.com") for name in ("super", "admin", "mgr", "she")}

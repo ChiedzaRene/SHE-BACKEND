@@ -1,37 +1,23 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import case, func
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from database import get_db
 from models.incident import Incident
+from models.site import Site
 from models.user import User
 from schemas.incident import IncidentCreate, IncidentUpdate, IncidentResponse
 from services.auth_services import get_current_user, require_role
 from services.audit_service import log_action
+from services.safety_metrics import combine, compute_by_site
 from typing import List
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
-STANDARD_HOURS = 200_000
+PeriodQuery = Query("12m", pattern="^(12m|ytd)$", description="Rolling 12 months or year to date")
 
-def calculate_metrics(db: Session, site_id=None, scope="site"):
-    # Count in the database instead of loading every incident row into Python
-    query = db.query(
-        func.count(Incident.id),
-        func.coalesce(func.sum(case((Incident.lost_time_days > 0, 1), else_=0)), 0),
-    )
-    if site_id is not None:
-        query = query.filter(Incident.site_id == site_id)
-    total_incidents, lost_time_injuries = query.one()
-    total_incidents, lost_time_injuries = int(total_incidents), int(lost_time_injuries)
-    trir  = round((total_incidents    * 200_000) / STANDARD_HOURS, 2)
-    ltifr = round((lost_time_injuries * 200_000) / STANDARD_HOURS, 2)
-    return {
-        "scope": scope,
-        "total_incidents": total_incidents,
-        "lost_time_injuries": lost_time_injuries,
-        "trir": trir,
-        "ltifr": ltifr
-    }
+
+def _metrics_response(stats: dict, scope: str, period: str) -> dict:
+    return {"scope": scope, "period": period, **stats}
+
 
 # Get all incidents
 @router.get("/", response_model=List[IncidentResponse])
@@ -43,26 +29,50 @@ def get_all_incidents(
         return db.query(Incident).filter(Incident.site_id == current_user.site_id).all()
     return db.query(Incident).all()
 
+# Per-site rates (TRIR / LTIFR) for the dashboards: one query instead of downloading every incident
+@router.get("/metrics/by-site")
+def get_metrics_by_site(
+    period: str = PeriodQuery,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role == "site_manager":
+        site_ids = [current_user.site_id]
+    else:
+        site_ids = [row[0] for row in db.query(Site.id).all()]
+    stats = compute_by_site(db, site_ids, period)
+    return [{"site_id": sid, "period": period, **s} for sid, s in sorted(stats.items())]
+
+
 # Global metrics
 @router.get("/metrics/global")
 def get_global_metrics(
+    period: str = PeriodQuery,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     if current_user.role == "site_manager":
-        return calculate_metrics(db, current_user.site_id, f"site_{current_user.site_id}")
-    return calculate_metrics(db, None, "global")
+        site_ids = [current_user.site_id]
+        scope = f"site_{current_user.site_id}"
+    else:
+        site_ids = [row[0] for row in db.query(Site.id).all()]
+        scope = "global"
+    stats = combine(compute_by_site(db, site_ids, period).values())
+    return _metrics_response(stats, scope, period)
+
 
 # Site metrics
 @router.get("/metrics/{site_id}")
 def get_site_metrics(
     site_id: int,
+    period: str = PeriodQuery,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     if current_user.role == "site_manager" and current_user.site_id != site_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    return calculate_metrics(db, site_id, f"site_{site_id}")
+    stats = compute_by_site(db, [site_id], period)[site_id]
+    return _metrics_response(stats, f"site_{site_id}", period)
 
 # Get incidents by site
 @router.get("/site/{site_id}", response_model=List[IncidentResponse])
