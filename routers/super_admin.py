@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.user import User
 from schemas.user import UserResponse, UserUpdate
-from services.auth_services import require_role
+from services.auth_services import hash_password, require_role
 from services.audit_service import log_action
 
 router = APIRouter(prefix="/admin/users", tags=["Super Admin User Management"])
@@ -39,9 +39,9 @@ def update_user_status_or_role(
         raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
 
     for key, value in update_data.items():
-        if key == "password" and value:
-            from services.auth_services import get_password_hash
-            setattr(user, "password_hash", get_password_hash(value))
+        if key == "password":
+            if value:
+                user.password = hash_password(value)
         else:
             setattr(user, key, value)
 

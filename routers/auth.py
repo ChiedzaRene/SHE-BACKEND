@@ -7,6 +7,7 @@ from database import get_db
 from models.user import User
 from schemas.user import UserCreate, UserResponse, Token
 from services.auth_services import (
+    require_role,
     hash_password,
     authenticate_user,
     create_access_token,
@@ -21,7 +22,16 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", response_model=UserResponse)
 @limiter.limit("3/minute")  # max 3 registrations per minute per IP
-def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
+def register(
+    request: Request,
+    user_data: UserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "super_admin")),
+):
+    # Registration is staff-only: self-service sign-up would let anyone pick their own role.
+    if user_data.role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Only a super admin can create super admins")
+
     existing_user = db.query(User).filter(
         User.email == user_data.email
     ).first()

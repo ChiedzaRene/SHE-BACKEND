@@ -56,6 +56,8 @@ def get_site_metrics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    if current_user.role == "site_manager" and current_user.site_id != site_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     incidents = db.query(Incident).filter(Incident.site_id == site_id).all()
     return calculate_metrics(incidents, scope=f"site_{site_id}")
 
@@ -80,6 +82,8 @@ def get_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if current_user.role == "site_manager" and incident.site_id != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return incident
 
 # Create incident
@@ -90,6 +94,8 @@ def create_incident(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    if current_user.role == "site_manager" and incident_data.site_id != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Cannot log incidents for another site")
     new_incident = Incident(
         **incident_data.model_dump(),
         user_id=current_user.id
@@ -121,6 +127,8 @@ def update_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if current_user.role == "site_manager" and incident.site_id != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     for key, value in incident_data.model_dump(exclude_unset=True).items():
         setattr(incident, key, value)
     db.commit()

@@ -47,6 +47,9 @@ def create_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("admin", "super_admin")),
 ):
+    if user.role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Only a super admin can create super admins")
+
     existing_user = db.query(User).filter(User.email == user.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -86,6 +89,11 @@ def update_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if current_user.role != "super_admin" and (
+        user.role == "super_admin" or user_data.role == "super_admin"
+    ):
+        raise HTTPException(status_code=403, detail="Only a super admin can modify super admins")
 
     if user_data.email is not None:
         existing_user = (
@@ -134,6 +142,10 @@ def delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+    if user.role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Only a super admin can delete super admins")
 
     db.delete(user)
     db.commit()

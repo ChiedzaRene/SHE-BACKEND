@@ -17,6 +17,10 @@ router = APIRouter(prefix="/inspections", tags=["Inspections"])
 UPLOAD_DIR = "uploads/inspections"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Allow-list: anything else (.html, .svg, .js ...) could run script when served from our origin
+ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
 
 @router.get("/", response_model=List[InspectionResponse])
 def get_all_inspections(
@@ -82,6 +86,9 @@ async def create_inspection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == "site_manager" and site_id != current_user.site_id:
+        raise HTTPException(status_code=403, detail="Cannot create inspections for another site")
+
     if not (0 <= checklist_score <= 100) or not (0 <= she_file_score <= 100):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -90,12 +97,21 @@ async def create_inspection(
 
     file_url = None
     if file and file.filename:
-        file_ext = os.path.splitext(file.filename)[1]
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ALLOWED_UPLOAD_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type. Allowed: JPG, PNG, PDF.",
+            )
+        content = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="File too large (max 10 MB).")
+
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         file_path = os.path.join(UPLOAD_DIR, unique_filename)
 
         with open(file_path, "wb") as buffer:
-            buffer.write(await file.read())
+            buffer.write(content)
 
         file_url = f"/uploads/inspections/{unique_filename}"
 
@@ -103,8 +119,8 @@ async def create_inspection(
 
     resolved_inspector = (
         inspector_name.strip()
-        or getattr(current_user, "full_name", None)
-        or current_user.username
+        or current_user.full_name
+        or current_user.email
     )
 
     inspection = Inspection(
@@ -157,7 +173,7 @@ def delete_inspection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "she_team"):
+    if current_user.role not in ("admin", "she_team", "super_admin"):
         raise HTTPException(status_code=403, detail="Access denied")
     inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
     if not inspection:

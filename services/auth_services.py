@@ -11,8 +11,13 @@ from database import get_db
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Fallback default key prevents NoneType crashes during seeding or local development
-SECRET_KEY = os.getenv("SECRET_KEY", "glow_she_default_secure_secret_key_2026")
+# No fallback: a hard-coded key would let anyone forge tokens if the env var is ever missing.
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY or len(SECRET_KEY) < 32:
+    raise RuntimeError(
+        "SECRET_KEY must be set to a random string of at least 32 characters "
+        "(generate one with: python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 

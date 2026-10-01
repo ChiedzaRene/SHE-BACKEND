@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 .env
 .vscode/
+# Local data, logs and uploads must never be committed
+*.db
+*.log
+uploads/
+.env.*
+!.env.example

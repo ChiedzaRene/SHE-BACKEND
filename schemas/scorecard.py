@@ -97,7 +97,8 @@ class ScorecardItemOut(ScorecardItemCreate):
 
 class ScorecardCreate(BaseModel):
     site_id: int = Field(..., gt=0, description="Site ID must be a positive integer")
-    submitted_by: int = Field(..., gt=0, description="User ID must be a positive integer")
+    # Ignored by the API (the authenticated user is always used); kept so older clients don't break
+    submitted_by: Optional[int] = Field(default=None, gt=0)
     notes: Optional[str] = Field(default=None, max_length=2000)
     items: List[ScorecardItemCreate]
 
