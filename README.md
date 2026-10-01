@@ -1,103 +1,65 @@
+# SHE Management System - Backend
 
-﻿#  SHE Management System - Backend
+FastAPI backend for the Glow Petroleum **Safety, Health & Environment** dashboard: incidents,
+corrective actions, audits, inspections, legal compliance, trainings, scorecards and site
+performance (TRIR / LTIFR).
 
-This is the backend API for the **Safety, Health, and Environment (SHE) Management System**, specifically designed to handle incident reporting, safety audits, and environmental compliance data for the energy and fuel sector.
+## Setup
 
----
-
-##  Overview
-
-Built with **FastAPI**, this backend provides a high-performance, scalable solution for managing workplace safety metrics. It serves as the data engine for the SHE Dashboard, ensuring that health and safety officers can track real-time data efficiently.
-
-### Key Features
-* **Incident Management:** Create, read, and track safety incidents.
-* **SHE Metrics:** Aggregated data for dashboard visualizations.
-* **Structured Validation:** Strict data integrity using Pydantic models.
-* **Auto-Docs:** Interactive API documentation via Swagger and ReDoc.
-
----
-
-##  Tech Stack
-
-* **Framework:** [FastAPI](https://fastapi.tiangolo.com/)
-* **Language:** Python 3.9+
-* **Database:** SQLAlchemy / SQLModel
-* **Server:** Uvicorn (ASGI)
-* **Data Validation:** Pydantic
-
-1. Environment Isolation
-It is highly recommended to use a virtual environment:
-
-Bash
-# Create the environment
-python -m venv venv
-
-# Activate (Windows)
-.\venv\Scripts\activate
-
-# Activate (Mac/Linux)
-source venv/bin/activate
-
-2. Install Dependencies
-Bash
-pip install -r requirements.txt
-
+```bash
+python -m venv venv && source venv/bin/activate      # Windows: .\venv\Scripts\activate
+pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env                                  # then fill in the values
 uvicorn main:app --reload
-API Documentation
-FastAPI automatically generates documentation for your endpoints. You can access them here:
+```
 
-Swagger UI (Interactive): http://127.0.0.1:8000/docs
+Required environment variables (see `.env.example`):
 
-ReDoc (Structured): http://127.0.0.1:8000/redoc
-=======
-﻿#  SHE Management System - Backend
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL (or SQLite for local tests) connection string |
+| `SECRET_KEY` | JWT signing key, **32+ characters**. The app refuses to start without it. Generate with `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `ENABLE_DOCS` | `true` to expose `/docs` and `/redoc` (off by default) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime, default 480 |
+| `EXTRA_CORS_ORIGINS` | Extra allowed frontend origins, comma-separated |
+| `SENTRY_DSN` | Optional error monitoring (`pip install sentry-sdk`) |
 
-This is the backend API for the **Safety, Health, and Environment (SHE) Management System**, specifically designed to handle incident reporting, safety audits, and environmental compliance data for the energy and fuel sector.
+## First user
 
----
+There are no default accounts and no credentials in the repo. Create the first admin with:
 
-##  Overview
+```bash
+python create_user.py --email you@example.com --role super_admin --name "Your Name"
+```
 
-Built with **FastAPI**, this backend provides a high-performance, scalable solution for managing workplace safety metrics. It serves as the data engine for the SHE Dashboard, ensuring that health and safety officers can track real-time data efficiently.
+Roles: `super_admin`, `admin`, `she_team`, `site_manager` (site managers only see their own site).
 
-### Key Features
-* **Incident Management:** Create, read, and track safety incidents.
-* **SHE Metrics:** Aggregated data for dashboard visualizations.
-* **Structured Validation:** Strict data integrity using Pydantic models.
-* **Auto-Docs:** Interactive API documentation via Swagger and ReDoc.
+## Safety metrics
 
----
+TRIR and LTIFR are calculated in `services/safety_metrics.py` and nowhere else, per 200,000 hours:
 
-##  Tech Stack
+* **Recordable incident** = an incident of type `injury`
+* **Lost-time injury** = a recordable incident with `lost_time_days > 0`
+* **Hours worked** are entered monthly per site by the SHE team (`PUT /site-hours/`)
+* Only months with hours entered count. A site with no hours has a rate of `null` (shown as N/A).
 
-* **Framework:** [FastAPI](https://fastapi.tiangolo.com/)
-* **Language:** Python 3.9+
-* **Database:** SQLAlchemy / SQLModel
-* **Server:** Uvicorn (ASGI)
-* **Data Validation:** Pydantic
+`GET /incidents/metrics/by-site?period=12m|ytd` returns every site's figures in one call.
 
-1. Environment Isolation
-It is highly recommended to use a virtual environment:
+## API notes
 
-Bash
-# Create the environment
-python -m venv venv
+* List endpoints accept optional `?limit=&offset=`; with a limit the total is returned in the
+  `X-Total-Count` header. Without a limit they return everything, as before.
+* Inspection files are served from `/uploads/inspections/{file}` to logged-in users with access
+  to that site. Allowed types: JPG, PNG, PDF (10 MB max).
+* Uploads are stored on local disk, which is wiped on every Render redeploy. Move them to object
+  storage before relying on them.
 
-# Activate (Windows)
-.\venv\Scripts\activate
+## Tests and CI
 
-# Activate (Mac/Linux)
-source venv/bin/activate
+```bash
+pytest -q
+ruff check . --select E9,F63,F7,F82
+```
 
-2. Install Dependencies
-Bash
-pip install -r requirements.txt
-
-uvicorn main:app --reload
-API Documentation
-FastAPI automatically generates documentation for your endpoints. You can access them here:
-
-Swagger UI (Interactive): http://127.0.0.1:8000/docs
-
-ReDoc (Structured): http://127.0.0.1:8000/redoc
->>>>>>> 1407a1a5ec06c717d7b3708ad7ea653135048d5d
+GitHub Actions runs both on every pull request. `backup.py` writes a JSON backup of the main
+tables (password hashes are excluded and the file is created owner-only).

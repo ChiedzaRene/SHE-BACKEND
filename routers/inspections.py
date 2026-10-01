@@ -1,18 +1,24 @@
 import os
+import re
 import uuid
 from datetime import date as date_type
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, File, Form, Response, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models.inspections import Inspection
 from models.user import User
 from schemas.inspections import InspectionResponse, InspectionUpdate
+from services.access import assert_site_access
+from services.pagination import Pagination
 from services.auth_services import get_current_user
 
 router = APIRouter(prefix="/inspections", tags=["Inspections"])
+# Uploaded evidence is served only to logged-in users who may see that inspection
+uploads_router = APIRouter(tags=["Inspections"])
 
 UPLOAD_DIR = "uploads/inspections"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -24,24 +30,15 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 @router.get("/", response_model=List[InspectionResponse])
 def get_all_inspections(
+    response: Response,
+    page: Pagination = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    try:
-        if current_user.role == "site_manager":
-            return (
-                db.query(Inspection)
-                .filter(Inspection.site_id == current_user.site_id)
-                .order_by(Inspection.inspection_date.desc())
-                .all()
-            )
-        return db.query(Inspection).order_by(Inspection.inspection_date.desc()).all()
-    except Exception as e:
-        print(f"Error fetching inspections: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve inspections.",
-        )
+    query = db.query(Inspection)
+    if current_user.role == "site_manager":
+        query = query.filter(Inspection.site_id == current_user.site_id)
+    return page.apply(query, response, Inspection.inspection_date.desc()).all()
 
 
 @router.get("/site/{site_id}", response_model=List[InspectionResponse])
@@ -50,8 +47,7 @@ def get_site_inspections(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role == "site_manager" and current_user.site_id != site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, site_id)
     return (
         db.query(Inspection)
         .filter(Inspection.site_id == site_id)
@@ -69,8 +65,7 @@ def get_inspection(
     inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
     if not inspection:
         raise HTTPException(status_code=404, detail="Inspection not found")
-    if current_user.role == "site_manager" and inspection.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, inspection.site_id)
     return inspection
 
 
@@ -150,8 +145,7 @@ def update_inspection(
     inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
     if not inspection:
         raise HTTPException(status_code=404, detail="Inspection not found")
-    if current_user.role == "site_manager" and inspection.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, inspection.site_id)
 
     updates = data.model_dump(exclude_unset=True)
     for key, value in updates.items():
@@ -181,3 +175,26 @@ def delete_inspection(
     db.delete(inspection)
     db.commit()
     return {"message": "Inspection deleted successfully"}
+
+_STORED_NAME = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|jpeg|png|pdf)$", re.IGNORECASE)
+
+
+@uploads_router.get("/uploads/inspections/{filename}")
+def download_inspection_file(
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Only names we generated ourselves; this also rules out any path traversal
+    if not _STORED_NAME.match(filename):
+        raise HTTPException(status_code=404, detail="File not found")
+    inspection = (
+        db.query(Inspection)
+        .filter(Inspection.file_url == f"/uploads/inspections/{filename}")
+        .first()
+    )
+    path = os.path.join(UPLOAD_DIR, filename)
+    if not inspection or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    assert_site_access(current_user, inspection.site_id)
+    return FileResponse(path)

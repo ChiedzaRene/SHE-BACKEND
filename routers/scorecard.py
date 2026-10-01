@@ -10,14 +10,10 @@ from models.scorecard import Scorecard, ScorecardItem
 from models.site import Site
 from models.user import User
 from schemas.scorecard import ScorecardCreate, ScorecardOut
+from services.access import assert_site_access
 from services.auth_services import get_current_user, require_role
 
 router = APIRouter(prefix="/scorecard", tags=["Scorecard"])
-
-
-def _assert_site_access(user: User, site_id: int) -> None:
-    if user.role == "site_manager" and user.site_id != site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
 
 def _to_out(sc: Scorecard, include_items: bool = True) -> ScorecardOut:
@@ -140,7 +136,7 @@ def get_site_latest(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _assert_site_access(current_user, site_id)
+    assert_site_access(current_user, site_id)
     sc = (
         _base_query(db)
         .filter(Scorecard.site_id == site_id)
@@ -158,7 +154,7 @@ def get_site_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _assert_site_access(current_user, site_id)
+    assert_site_access(current_user, site_id)
     query = (
         _base_query(db, with_items=False)
         .filter(Scorecard.site_id == site_id)
@@ -180,7 +176,7 @@ def get_scorecard(
     sc = _base_query(db).filter(Scorecard.id == scorecard_id).first()
     if not sc:
         raise HTTPException(status_code=404, detail="Scorecard not found")
-    _assert_site_access(current_user, sc.site_id)
+    assert_site_access(current_user, sc.site_id)
     return _to_out(sc)
 
 
@@ -194,7 +190,7 @@ def create_scorecard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _assert_site_access(current_user, payload.site_id)
+    assert_site_access(current_user, payload.site_id)
 
     site = db.query(Site).filter(Site.id == payload.site_id).first()
     if not site:

@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -7,6 +7,8 @@ from models.legal import Legal
 from models.user import User
 from schemas.legal import LegalCreate, LegalResponse, LegalUpdate
 from services.audit_service import log_action
+from services.access import assert_site_access
+from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 
 router = APIRouter(prefix="/legal", tags=["Legal"])
@@ -14,12 +16,15 @@ router = APIRouter(prefix="/legal", tags=["Legal"])
 
 @router.get("/", response_model=List[LegalResponse])
 def get_all_legal(
+    response: Response,
+    page: Pagination = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    query = db.query(Legal)
     if current_user.role == "site_manager":
-        return db.query(Legal).filter(Legal.site_id == current_user.site_id).all()
-    return db.query(Legal).all()
+        query = query.filter(Legal.site_id == current_user.site_id)
+    return page.apply(query, response, Legal.id).all()
 
 
 @router.get("/site/{site_id}", response_model=List[LegalResponse])
@@ -28,8 +33,7 @@ def get_site_legal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role == "site_manager" and current_user.site_id != site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, site_id)
     return db.query(Legal).filter(Legal.site_id == site_id).all()
 
 
@@ -42,8 +46,7 @@ def get_legal(
     legal = db.query(Legal).filter(Legal.id == legal_id).first()
     if not legal:
         raise HTTPException(status_code=404, detail="Legal record not found")
-    if current_user.role == "site_manager" and legal.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, legal.site_id)
     return legal
 
 

@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -7,6 +7,8 @@ from models.audit import Audit
 from models.user import User
 from schemas.audit import AuditCreate, AuditResponse, AuditUpdate
 from services.audit_service import log_action
+from services.access import assert_site_access
+from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 
 router = APIRouter(prefix="/audits", tags=["Audits"])
@@ -14,12 +16,15 @@ router = APIRouter(prefix="/audits", tags=["Audits"])
 
 @router.get("/", response_model=List[AuditResponse])
 def get_all_audits(
+    response: Response,
+    page: Pagination = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    query = db.query(Audit)
     if current_user.role == "site_manager":
-        return db.query(Audit).filter(Audit.site_id == current_user.site_id).all()
-    return db.query(Audit).all()
+        query = query.filter(Audit.site_id == current_user.site_id)
+    return page.apply(query, response, Audit.id).all()
 
 
 @router.get("/site/{site_id}", response_model=List[AuditResponse])
@@ -28,8 +33,7 @@ def get_site_audits(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role == "site_manager" and current_user.site_id != site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, site_id)
     return db.query(Audit).filter(Audit.site_id == site_id).all()
 
 
@@ -42,8 +46,7 @@ def get_audit(
     audit = db.query(Audit).filter(Audit.id == audit_id).first()
     if not audit:
         raise HTTPException(status_code=404, detail="Audit not found")
-    if current_user.role == "site_manager" and audit.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, audit.site_id)
     return audit
 
 

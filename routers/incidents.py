@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 from database import get_db
 from models.incident import Incident
 from models.site import Site
 from models.user import User
 from schemas.incident import IncidentCreate, IncidentUpdate, IncidentResponse
+from services.access import assert_site_access
+from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 from services.audit_service import log_action
 from services.safety_metrics import combine, compute_by_site
@@ -22,12 +24,15 @@ def _metrics_response(stats: dict, scope: str, period: str) -> dict:
 # Get all incidents
 @router.get("/", response_model=List[IncidentResponse])
 def get_all_incidents(
+    response: Response,
+    page: Pagination = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    query = db.query(Incident)
     if current_user.role == "site_manager":
-        return db.query(Incident).filter(Incident.site_id == current_user.site_id).all()
-    return db.query(Incident).all()
+        query = query.filter(Incident.site_id == current_user.site_id)
+    return page.apply(query, response, Incident.id.desc()).all()
 
 # Per-site rates (TRIR / LTIFR) for the dashboards: one query instead of downloading every incident
 @router.get("/metrics/by-site")
@@ -69,8 +74,7 @@ def get_site_metrics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role == "site_manager" and current_user.site_id != site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, site_id)
     stats = compute_by_site(db, [site_id], period)[site_id]
     return _metrics_response(stats, f"site_{site_id}", period)
 
@@ -81,8 +85,7 @@ def get_site_incidents(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role == "site_manager" and current_user.site_id != site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, site_id)
     return db.query(Incident).filter(Incident.site_id == site_id).all()
 
 # Get one incident
@@ -95,8 +98,7 @@ def get_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    if current_user.role == "site_manager" and incident.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, incident.site_id)
     return incident
 
 # Create incident
@@ -140,8 +142,7 @@ def update_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    if current_user.role == "site_manager" and incident.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, incident.site_id)
     for key, value in incident_data.model_dump(exclude_unset=True).items():
         setattr(incident, key, value)
     db.commit()

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -13,6 +13,8 @@ from schemas.corrective_action import (
     CorrectiveActionUpdate,
 )
 from services.audit_service import log_action
+from services.access import assert_site_access
+from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 
 router = APIRouter(prefix="/corrective-actions", tags=["Corrective Actions"])
@@ -40,15 +42,15 @@ def _to_response(action: CorrectiveAction) -> dict:
 
 @router.get("/", response_model=List[CorrectiveActionResponse])
 def get_all_corrective_actions(
+    response: Response,
+    page: Pagination = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    query = db.query(CorrectiveAction)
     if current_user.role == "site_manager":
-        actions = db.query(CorrectiveAction).filter(
-            CorrectiveAction.site_id == current_user.site_id
-        ).all()
-    else:
-        actions = db.query(CorrectiveAction).all()
+        query = query.filter(CorrectiveAction.site_id == current_user.site_id)
+    actions = page.apply(query, response, CorrectiveAction.id.desc()).all()
     return [_to_response(action) for action in actions]
 
 
@@ -77,8 +79,7 @@ def get_corrective_action(
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
-    if current_user.role == "site_manager" and action.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, action.site_id)
     return _to_response(action)
 
 
@@ -133,8 +134,7 @@ def resolve_corrective_action(
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
-    if current_user.role == "site_manager" and action.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, action.site_id)
 
     action.resolution_notes = resolve_data.resolution_notes
     action.is_successful = resolve_data.is_successful
@@ -168,8 +168,7 @@ def update_corrective_action(
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
-    if current_user.role == "site_manager" and action.site_id != current_user.site_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    assert_site_access(current_user, action.site_id)
 
     updates = action_data.model_dump(exclude_unset=True)
     if "description" in updates and "action_taken" not in updates:

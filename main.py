@@ -4,7 +4,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -26,18 +25,46 @@ from routers import (
     auth, scorecard, sites, incidents, audits, 
     legal, trainings, users, corrective_actions, super_admin, site_hours
 )
-from routers.inspections import router as inspections
+from routers.inspections import router as inspections, uploads_router
 from routers.audit_log import router as audit_log_router
+
+# Optional error monitoring: enabled only when SENTRY_DSN is set and sentry-sdk is installed
+if os.getenv("SENTRY_DSN"):
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(dsn=os.environ["SENTRY_DSN"], traces_sample_rate=0.0, send_default_pii=False)
+    except ImportError:
+        logging.getLogger("she_portal").warning("SENTRY_DSN is set but sentry-sdk is not installed")
 
 # Setup Rate Limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
+
+# Interactive API docs list every endpoint, so they are off unless explicitly enabled
+# (set ENABLE_DOCS=true for local development).
+DOCS_ENABLED = os.getenv("ENABLE_DOCS", "false").lower() == "true"
 
 app = FastAPI(
     title="SHE Management System",
     description="Safety, Health & Environment Management API",
     version="1.0.0",
     swagger_ui_init_oauth={},
+    docs_url="/docs" if DOCS_ENABLED else None,
+    redoc_url="/redoc" if DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if DOCS_ENABLED else None,
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    if request.url.path not in ("/docs", "/redoc"):  # Swagger/ReDoc load their own scripts
+        response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    return response
 
 # Register rate limiter
 app.state.limiter = limiter
@@ -49,11 +76,12 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "https://glowshe.netlify.app",
-        "http://192.168.1.162:3000"
+        *[o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()],
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count"],
 )
 
 # Configure Logging (StreamHandler only for cloud environments like Render)
@@ -70,9 +98,9 @@ logger = logging.getLogger("she_portal")
 # Security scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-# Ensure uploads directory exists and mount static files (ONLY ONCE)
+# Uploads live here but are NOT mounted as public static files: they are served
+# through an authenticated route (see routers/inspections.py).
 os.makedirs("uploads/inspections", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Schema migrations check
 def ensure_inspections_file_url_column() -> None:
@@ -126,6 +154,7 @@ app.include_router(users.router)
 app.include_router(corrective_actions.router)
 app.include_router(scorecard.router)
 app.include_router(inspections)
+app.include_router(uploads_router)
 app.include_router(audit_log_router)
 app.include_router(super_admin.router)
 app.include_router(site_hours.router)
