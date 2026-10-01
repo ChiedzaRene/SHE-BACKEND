@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 from database import get_db
 from models.incident import Incident
@@ -12,9 +13,16 @@ router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
 STANDARD_HOURS = 200_000
 
-def calculate_metrics(incidents, scope="site"):
-    total_incidents = len(incidents)
-    lost_time_injuries = sum(1 for i in incidents if i.lost_time_days and i.lost_time_days > 0)
+def calculate_metrics(db: Session, site_id=None, scope="site"):
+    # Count in the database instead of loading every incident row into Python
+    query = db.query(
+        func.count(Incident.id),
+        func.coalesce(func.sum(case((Incident.lost_time_days > 0, 1), else_=0)), 0),
+    )
+    if site_id is not None:
+        query = query.filter(Incident.site_id == site_id)
+    total_incidents, lost_time_injuries = query.one()
+    total_incidents, lost_time_injuries = int(total_incidents), int(lost_time_injuries)
     trir  = round((total_incidents    * 200_000) / STANDARD_HOURS, 2)
     ltifr = round((lost_time_injuries * 200_000) / STANDARD_HOURS, 2)
     return {
@@ -42,12 +50,8 @@ def get_global_metrics(
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role == "site_manager":
-        incidents = db.query(Incident).filter(Incident.site_id == current_user.site_id).all()
-        scope = f"site_{current_user.site_id}"
-    else:
-        incidents = db.query(Incident).all()
-        scope = "global"
-    return calculate_metrics(incidents, scope)
+        return calculate_metrics(db, current_user.site_id, f"site_{current_user.site_id}")
+    return calculate_metrics(db, None, "global")
 
 # Site metrics
 @router.get("/metrics/{site_id}")
@@ -58,8 +62,7 @@ def get_site_metrics(
 ):
     if current_user.role == "site_manager" and current_user.site_id != site_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    incidents = db.query(Incident).filter(Incident.site_id == site_id).all()
-    return calculate_metrics(incidents, scope=f"site_{site_id}")
+    return calculate_metrics(db, site_id, f"site_{site_id}")
 
 # Get incidents by site
 @router.get("/site/{site_id}", response_model=List[IncidentResponse])

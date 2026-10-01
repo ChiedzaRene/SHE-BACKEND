@@ -86,9 +86,33 @@ def ensure_inspections_file_url_column() -> None:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS file_url VARCHAR"))
 
+# Foreign-key columns used as filters on almost every list/metrics query.
+# create_all() never adds indexes to existing tables, so create them idempotently.
+INDEXES = [
+    ("ix_incidents_site_id", "incidents", "site_id"),
+    ("ix_audits_site_id", "audits", "site_id"),
+    ("ix_legal_site_id", "legal", "site_id"),
+    ("ix_trainings_site_id", "trainings", "site_id"),
+    ("ix_inspections_site_id", "inspections", "site_id"),
+    ("ix_corrective_actions_site_id", "corrective_actions", "site_id"),
+    ("ix_corrective_actions_incident_id", "corrective_actions", "incident_id"),
+    ("ix_users_site_id", "users", "site_id"),
+    ("ix_audit_logs_timestamp", "audit_logs", "timestamp"),
+]
+
+
+def ensure_indexes() -> None:
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for name, table, column in INDEXES:
+            if inspector.has_table(table):
+                connection.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})"))
+
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 ensure_inspections_file_url_column()
+ensure_indexes()
 
 # Register Routers
 app.include_router(auth.router)
