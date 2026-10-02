@@ -45,6 +45,17 @@ TRIR and LTIFR are calculated in `services/safety_metrics.py` and nowhere else, 
 
 `GET /incidents/metrics/by-site?period=12m|ytd` returns every site's figures in one call.
 
+## Reports
+
+`GET /reports/{kind}` where kind is `performance` (monthly, per site or all sites), `compliance`,
+`incidents` (register with date, type and severity filters) or `leaderboard` (site comparison).
+Add `format=csv` or `format=pdf` to download; the default `json` powers the on-screen view.
+All three come from one builder (`services/reports.py`), so they always agree.
+
+* Site managers are limited to their own site and cannot run the site comparison.
+* CSV cells that start with `=`, `+`, `-` or `@` are neutralised so Excel cannot run them as formulas.
+* CSV and PDF downloads are recorded in the audit log (`EXPORT_REPORT`); on-screen views are not.
+
 ## API notes
 
 * List endpoints accept optional `?limit=&offset=`; with a limit the total is returned in the

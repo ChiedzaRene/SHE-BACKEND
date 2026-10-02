@@ -20,6 +20,9 @@ from models.incident import Incident
 from models.site_hours import SiteHours
 
 RATE_BASIS_HOURS = 200_000
+# Warning thresholds per 200,000 hours (the dashboards and reports flag sites above these)
+TRIR_LIMIT = 1.5
+LTIFR_LIMIT = 0.5
 PERIODS = ("12m", "ytd")
 
 
@@ -63,20 +66,39 @@ def compute_by_site(
     period: str = "12m",
     today: Optional[date] = None,
 ) -> Dict[int, dict]:
-    """Per-site stats for the window. Every requested site appears, even with no data."""
+    """Per-site stats for a rolling window. Every requested site appears, even with no data."""
     if period not in PERIODS:
         raise ValueError(f"period must be one of {PERIODS}")
     today = today or date.today()
-    start = window_start(period, today)
+    return compute_range(db, site_ids, window_start(period, today), None, today)
+
+
+def compute_range(
+    db: Session,
+    site_ids: Optional[Iterable[int]],
+    start: date,
+    end: Optional[date] = None,
+    today: Optional[date] = None,
+) -> Dict[int, dict]:
+    """Per-site stats for whole calendar months from `start` (inclusive) up to `end` (exclusive).
+
+    With no `end` the window runs to today.
+    """
+    today = today or date.today()
     site_ids = list(site_ids) if site_ids is not None else None
 
     hours_q = db.query(SiteHours.site_id, SiteHours.period, SiteHours.hours_worked).filter(
-        SiteHours.period >= start, SiteHours.period <= today
+        SiteHours.period >= start
     )
     when = func.coalesce(Incident.occurred_at, Incident.date_time)
     inc_q = db.query(Incident.site_id, when, Incident.type, Incident.lost_time_days).filter(
         when >= start
     )
+    if end is None:
+        hours_q = hours_q.filter(SiteHours.period <= today)
+    else:
+        hours_q = hours_q.filter(SiteHours.period < end)
+        inc_q = inc_q.filter(when < end)
     if site_ids is not None:
         hours_q = hours_q.filter(SiteHours.site_id.in_(site_ids))
         inc_q = inc_q.filter(Incident.site_id.in_(site_ids))

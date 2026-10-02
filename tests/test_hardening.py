@@ -100,8 +100,8 @@ def test_sites_without_site_manager_access_blocked_for_other_site_upload(client,
                 role="site_manager", site_id=2))
     db.commit()
     db.close()
-    login = client.post("/auth/login", data={"username": "mgr2@x.com", "password": "password123"})
-    mgr2 = {"Authorization": "Bearer " + login.json()["access_token"]}
+    from services.auth_services import create_access_token
+    mgr2 = {"Authorization": "Bearer " + create_access_token({"sub": "mgr2@x.com"})}
     own = client.get("/inspections/", headers=auth["mgr"]).json()
     url = next(i["file_url"] for i in own if i["file_url"])
     assert client.get(url, headers=mgr2).status_code == 403
