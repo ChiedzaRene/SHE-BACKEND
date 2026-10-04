@@ -97,3 +97,16 @@ def test_cleanup_repairs_old_garbled_text_and_is_dry_by_default():
         db.delete(row)
         db.commit()
         db.close()
+
+
+def test_incident_summary_counts_and_site_scope(client, auth):
+    admin = client.get("/incidents/summary", headers=auth["admin"])
+    assert admin.status_code == 200
+    body = admin.json()
+    assert body["total"] == sum(t["value"] for t in body["by_type"])
+    assert 0 <= body["open"] <= body["total"]
+    everything = len(client.get("/incidents/", headers=auth["admin"]).json())
+    assert body["total"] == everything
+    mine = client.get("/incidents/summary", headers=auth["mgr"]).json()
+    assert mine["total"] == len(client.get("/incidents/", headers=auth["mgr"]).json())
+    assert client.get("/incidents/summary").status_code == 401

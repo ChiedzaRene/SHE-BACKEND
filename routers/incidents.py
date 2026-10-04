@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from database import get_db
 from models.incident import Incident
@@ -33,6 +34,30 @@ def get_all_incidents(
     if current_user.role == "site_manager":
         query = query.filter(Incident.site_id == current_user.site_id)
     return page.apply(query, response, Incident.id.desc()).all()
+
+# Totals for the dashboards (how many, how many still open, split by type) without sending every incident
+@router.get("/summary")
+def get_incident_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scope = []
+    if current_user.role == "site_manager":
+        scope.append(Incident.site_id == current_user.site_id)
+    by_type = (
+        db.query(Incident.type, func.count(Incident.id))
+        .filter(*scope)
+        .group_by(Incident.type)
+        .order_by(func.count(Incident.id).desc())
+        .all()
+    )
+    open_count = db.query(func.count(Incident.id)).filter(*scope, Incident.resolved.isnot(True)).scalar() or 0
+    return {
+        "total": sum(n for _, n in by_type),
+        "open": open_count,
+        "by_type": [{"name": t or "Other", "value": n} for t, n in by_type],
+    }
+
 
 # Per-site rates (TRIR / LTIFR) for the dashboards: one query instead of downloading every incident
 @router.get("/metrics/by-site")

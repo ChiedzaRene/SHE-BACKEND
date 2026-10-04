@@ -110,3 +110,9 @@ ruff check . --select E9,F63,F7,F82
 
 GitHub Actions runs both on every pull request. `backup.py` writes a JSON backup of the main
 tables (password hashes are excluded and the file is created owner-only).
+
+## Housekeeping
+
+- **Audit log retention:** entries older than `AUDIT_RETENTION_DAYS` (default 730, about two years) are deleted when the server starts and then once a day.
+- **Garbled text (`&amp;`):** older records saved before the sanitiser fix may show `&amp;`, `&lt;` or `&gt;`. Preview with `python fix_escaped_text.py`, then repair with `python fix_escaped_text.py --apply` (run `python backup.py` first).
+- **Sign-in limits:** 8 wrong passwords per account in 5 minutes locks that account briefly; there is also a generous per-IP ceiling (60 sign-ins a minute).
