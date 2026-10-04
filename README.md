@@ -62,11 +62,15 @@ All three come from one builder (`services/reports.py`), so they always agree.
   (wrong current password returns 400, never 401, so the frontend does not sign the user out).
 * `GET/PUT /settings/safety-targets`: the TRIR/LTIFR warning limits (default 1.5 / 0.5 per 200,000 hours).
   Everyone can read them; admins can change them, and every change is audited. Reports use them too.
-* `GET /audit-logs/export` (super admin only): the filtered log as a PDF (newest 2000 entries, UTC).
-  Exports are logged as `EXPORT_AUDIT_LOG`.
-* `GET /audit-logs/` (super admin only): filter by `user`, `action`, `resource`, `start`, `end`; page with
-  `limit`/`offset`; total in `X-Total-Count`. `/audit-logs/facets` lists the actions, sections and people in the log, with plain-English names
+* `GET /audit-logs/` (super admin only): newest first, filter by `email` (exactly one person), `user` (part of
+  an email), `action`, `resource`, `start`, `end`; page with `limit`/`offset`; total in `X-Total-Count`.
+* `GET /audit-logs/person?email=`: one person's trail at a glance (total, first/last activity, last sign-in,
+  failed sign-ins, what they did). `GET /audit-logs/facets`: the actions, sections and **every person**
+  (accounts, plus removed accounts that still have history) with plain-English names
   (`services/audit_labels.py`; a test fails if a new action is added without a label).
+* **What is recorded:** every change to incidents, corrective actions, audits, inspections, legal records and
+  scorecards, trainings, sites, hours, users and settings, plus **sign-ins and failed sign-ins** (the typed
+  password is never stored). Report downloads are recorded too.
 
 ## Deleting users
 

@@ -197,7 +197,8 @@ def test_audit_log_filters_paging_and_facets(client, auth):
 
     facets = client.get("/audit-logs/facets", headers=sup).json()
     assert "CHANGE_PASSWORD" in facets["actions"] and "users" in facets["resources"]
-    assert "me90@x.com" in facets["users"] and facets["users"] == sorted(set(facets["users"]))  # each email once, A-Z
+    emails = [u["email"] for u in facets["users"]]
+    assert "me90@x.com" in emails and len(emails) == len(set(emails))   # everyone listed once
     assert facets["action_labels"]["RESET_PASSWORD"] == "Password reset by an admin"
     assert facets["resource_labels"]["site_hours"] == "Hours worked"
     labels = [facets["action_labels"][a] for a in facets["actions"]]

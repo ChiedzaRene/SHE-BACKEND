@@ -18,6 +18,13 @@ ACTION_LABELS = {
     "UPDATE_SITE": "Site updated",
     "DELETE_SITE": "Site deleted",
     "UPSERT_SITE_HOURS": "Hours worked entered",
+    "CREATE_INSPECTION": "Inspection recorded",
+    "UPDATE_INSPECTION": "Inspection updated",
+    "DELETE_INSPECTION": "Inspection deleted",
+    "CREATE_SCORECARD": "Legal scorecard submitted",
+    "DELETE_SCORECARD": "Legal scorecard deleted",
+    "LOGIN": "Signed in",
+    "LOGIN_FAILED": "Failed sign-in attempt",
     "CREATE_USER": "User created",
     "UPDATE_USER": "User updated",
     "DELETE_USER": "User deleted",
@@ -26,7 +33,6 @@ ACTION_LABELS = {
     "UPDATE_PROFILE": "Name changed by the user",
     "UPDATE_SETTINGS": "Settings changed",
     "EXPORT_REPORT": "Report downloaded",
-    "EXPORT_AUDIT_LOG": "Audit log downloaded",
 }
 
 RESOURCE_LABELS = {
@@ -40,6 +46,9 @@ RESOURCE_LABELS = {
     "users": "Users",
     "settings": "Settings",
     "reports": "Reports",
+    "inspections": "Inspections",
+    "scorecards": "Legal scorecards",
+    "auth": "Sign-in",
     "audit_logs": "Audit log",
 }
 

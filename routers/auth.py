@@ -6,7 +6,7 @@ from slowapi.util import get_remote_address
 from database import get_db
 from models.user import User
 from schemas.user import ChangePassword, UserCreate, UserResponse, Token
-from services.audit_service import log_action
+from services.audit_service import log_action, log_event
 from services.passwords import set_new_password
 from services.auth_services import (
     get_current_user,
@@ -58,6 +58,15 @@ def register(
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    log_action(
+        db=db,
+        user=current_user,
+        action="CREATE_USER",
+        resource="users",
+        resource_id=new_user.id,
+        details=f"Created user: {new_user.email} (Role: {new_user.role})",
+        ip_address=request.client.host if request.client else None,
+    )
     return new_user
 
 
@@ -70,8 +79,20 @@ def login(
 ):
     # OAuth2PasswordRequestForm uses "username" field — we treat it as email
     user = authenticate_user(db, form_data.username, form_data.password)
+    ip = request.client.host if request.client else None
 
     if not user:
+        # Recorded so an admin can see someone guessing a password. The typed password is never stored.
+        known = get_user_by_email(db, form_data.username)
+        log_event(
+            db,
+            email=form_data.username,
+            role=known.role if known else "unknown",
+            action="LOGIN_FAILED",
+            resource="auth",
+            details="Wrong password" if known else "No account with this email",
+            ip_address=ip,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -79,11 +100,14 @@ def login(
         )
 
     if not user.is_active:
+        log_action(db=db, user=user, action="LOGIN_FAILED", resource="auth",
+                   details="Account is deactivated", ip_address=ip)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled. Contact your administrator."
         )
 
+    log_action(db=db, user=user, action="LOGIN", resource="auth", details="Signed in", ip_address=ip)
     return {"access_token": issue_token(user), "token_type": "bearer"}
 
 

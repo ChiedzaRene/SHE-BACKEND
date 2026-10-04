@@ -2,18 +2,17 @@
 from datetime import date, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
+from models.user import User as UserModel
 from models.audit_log import AuditLog
 from models.user import User
 from schemas.audit_log import AuditLogResponse
 from services.audit_labels import ACTION_LABELS, RESOURCE_LABELS, action_label, resource_label
-from services.audit_service import log_action
 from services.auth_services import require_role
-from services.report_render import to_pdf
-from services.reports import AUDIT_EXPORT_MAX_ROWS, audit_log_document
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
@@ -23,7 +22,10 @@ def _like_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _apply_filters(query, user, resource, action, start, end):
+def _apply_filters(query, user, resource, action, start, end, email=None):
+    if email:
+        # A person picked from the list: exactly their address, never someone whose address merely contains it
+        query = query.filter(func.lower(AuditLog.user_email) == email.strip().lower())
     if user:
         query = query.filter(AuditLog.user_email.ilike(f"%{_like_escape(user)}%", escape="\\"))
     if resource:
@@ -37,17 +39,11 @@ def _apply_filters(query, user, resource, action, start, end):
     return query
 
 
-def _describe_filters(user, resource, action, start, end) -> str:
-    parts = [f"user contains '{user}'" if user else "", f"action: {action_label(action)}" if action else "",
-             f"area: {resource_label(resource)}" if resource else "",
-             f"from {start.isoformat()}" if start else "", f"to {end.isoformat()}" if end else ""]
-    return ", ".join(p for p in parts if p)
-
-
 @router.get("/", response_model=List[AuditLogResponse])
 def get_audit_logs(
     response: Response,
-    user: Optional[str] = Query(None, max_length=100, description="Part of the user's email"),
+    email: Optional[str] = Query(None, max_length=254, description="Exactly this person (as picked from the list)"),
+    user: Optional[str] = Query(None, max_length=100, description="Part of an email (a looser search)"),
     resource: Optional[str] = Query(None, max_length=100),
     action: Optional[str] = Query(None, max_length=100),
     start: Optional[date] = Query(None, description="First day"),
@@ -59,7 +55,7 @@ def get_audit_logs(
     current_user: User = Depends(require_role("super_admin")),
 ):
     """Retrieve system audit logs, newest first (Super Admin only). Total matches in X-Total-Count."""
-    query = _apply_filters(db.query(AuditLog), user, resource, action, start, end)
+    query = _apply_filters(db.query(AuditLog), user, resource, action, start, end, email)
 
     response.headers["X-Total-Count"] = str(query.count())
     return (
@@ -84,39 +80,50 @@ def get_audit_log_facets(
         "action_labels": {a: action_label(a) for a in set(actions) | set(ACTION_LABELS)},
         "resources": sorted(resources, key=lambda r: resource_label(r).lower()),
         "resource_labels": {r: resource_label(r) for r in set(resources) | set(RESOURCE_LABELS)},
-        "users": [u for (u,) in db.query(AuditLog.user_email).distinct().order_by(AuditLog.user_email)],
+        "users": _people(db),
     }
 
 
-@router.get("/export")
-def export_audit_log(
-    request: Request,
-    user: Optional[str] = Query(None, max_length=100),
-    resource: Optional[str] = Query(None, max_length=100),
-    action: Optional[str] = Query(None, max_length=100),
-    start: Optional[date] = Query(None),
-    end: Optional[date] = Query(None),
+def _people(db: Session) -> list:
+    """Everyone who can appear in the log: all accounts, plus anyone since deleted (their entries remain)."""
+    people = {}
+    for u in db.query(UserModel).all():
+        people[u.email.lower()] = {
+            "email": u.email, "name": u.full_name or "", "role": u.role,
+            "status": "active" if u.is_active else "inactive",
+        }
+    # People in the log who no longer have an account (deleted) or never did (a mistyped sign-in)
+    for email, role in db.query(AuditLog.user_email, AuditLog.user_role).distinct():
+        if email and email.lower() not in people:
+            people[email.lower()] = {"email": email, "name": "", "role": role, "status": "removed"}
+    return sorted(people.values(), key=lambda p: (p["name"] or p["email"]).lower())
+
+
+@router.get("/person")
+def get_person_summary(
+    email: str = Query(..., max_length=254),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("super_admin")),
 ):
-    """The audit log as a PDF, using the same filters as the list (Super Admin only)."""
-    query = _apply_filters(db.query(AuditLog), user, resource, action, start, end)
-    total = query.count()
-    entries = query.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc()).limit(AUDIT_EXPORT_MAX_ROWS).all()
-    filter_text = _describe_filters(user, resource, action, start, end)
-    pdf = to_pdf(audit_log_document(entries, total, filter_text))
-
-    # Exporting who-did-what is itself something worth recording
-    log_action(
-        db=db,
-        user=current_user,
-        action="EXPORT_AUDIT_LOG",
-        resource="audit_logs",
-        details=f"Exported {len(entries)} of {total} entries" + (f" ({filter_text})" if filter_text else ""),
-        ip_address=request.client.host if request.client else None,
+    """Everything about one person's trail at a glance: how much, since when, and what kind of activity."""
+    mine = func.lower(AuditLog.user_email) == email.strip().lower()
+    total, first_at, last_at = db.query(func.count(AuditLog.id), func.min(AuditLog.timestamp), func.max(AuditLog.timestamp)).filter(mine).one()
+    last_sign_in = db.query(func.max(AuditLog.timestamp)).filter(mine, AuditLog.action == "LOGIN").scalar()
+    failed = db.query(func.count(AuditLog.id)).filter(mine, AuditLog.action == "LOGIN_FAILED").scalar()
+    by_activity = (
+        db.query(AuditLog.action, func.count(AuditLog.id))
+        .filter(mine).group_by(AuditLog.action).order_by(func.count(AuditLog.id).desc()).all()
     )
-    return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="she-audit-log-{date.today().isoformat()}.pdf"'},
-    )
+    info = next((p for p in _people(db) if p["email"].lower() == email.strip().lower()), None)
+    return {
+        "email": info["email"] if info else email.strip(),
+        "name": info["name"] if info else "",
+        "role": info["role"] if info else None,
+        "status": info["status"] if info else "unknown",
+        "total": total,
+        "first_at": first_at,
+        "last_at": last_at,
+        "last_sign_in_at": last_sign_in,
+        "failed_sign_ins": failed,
+        "by_activity": [{"action": a, "label": action_label(a), "count": c} for a, c in by_activity],
+    }
