@@ -62,8 +62,17 @@ All three come from one builder (`services/reports.py`), so they always agree.
   (wrong current password returns 400, never 401, so the frontend does not sign the user out).
 * `GET/PUT /settings/safety-targets`: the TRIR/LTIFR warning limits (default 1.5 / 0.5 per 200,000 hours).
   Everyone can read them; admins can change them, and every change is audited. Reports use them too.
+* `GET /audit-logs/export` (super admin only): the filtered log as a PDF (newest 2000 entries, UTC).
+  Exports are logged as `EXPORT_AUDIT_LOG`.
 * `GET /audit-logs/` (super admin only): filter by `user`, `action`, `resource`, `start`, `end`; page with
   `limit`/`offset`; total in `X-Total-Count`. `/audit-logs/facets` lists the actions and areas.
+
+## Deleting users
+
+Admins can delete users (not super admins; only a super admin can). A user who has recorded incidents,
+audits, inspections, legal or training records, scorecards or hours can't be deleted: the API answers `409`
+with what they recorded and suggests deactivating the account (`is_active: false`), which blocks sign-in but
+keeps their records attributed.
 
 ## Password security
 
