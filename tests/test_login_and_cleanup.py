@@ -105,8 +105,10 @@ def test_incident_summary_counts_and_site_scope(client, auth):
     body = admin.json()
     assert body["total"] == sum(t["value"] for t in body["by_type"])
     assert 0 <= body["open"] <= body["total"]
+    assert body["total"] == sum(s["value"] for s in body["by_site"])
     everything = len(client.get("/incidents/", headers=auth["admin"]).json())
     assert body["total"] == everything
     mine = client.get("/incidents/summary", headers=auth["mgr"]).json()
     assert mine["total"] == len(client.get("/incidents/", headers=auth["mgr"]).json())
+    assert {s["site_id"] for s in mine["by_site"]} <= {1}
     assert client.get("/incidents/summary").status_code == 401

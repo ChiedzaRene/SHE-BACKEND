@@ -52,10 +52,13 @@ def get_incident_summary(
         .all()
     )
     open_count = db.query(func.count(Incident.id)).filter(*scope, Incident.resolved.isnot(True)).scalar() or 0
+    by_site = db.query(Incident.site_id, func.count(Incident.id)).filter(*scope).group_by(Incident.site_id).all()
     return {
         "total": sum(n for _, n in by_type),
         "open": open_count,
         "by_type": [{"name": t or "Other", "value": n} for t, n in by_type],
+        # all-time count per site, for the map bubbles
+        "by_site": [{"site_id": sid, "value": n} for sid, n in by_site if sid is not None],
     }
 
 
