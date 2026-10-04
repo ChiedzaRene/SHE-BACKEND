@@ -1,8 +1,17 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
+from models.app_setting import AppSetting
+from models.audit import Audit
+from models.incident import Incident
+from models.inspections import Inspection
+from models.legal import Legal
+from models.scorecard import Scorecard
+from models.site_hours import SiteHours
+from models.training import Training
 from models.user import User
 from schemas.user import UserCreate, UserResponse, UserSelfUpdate, UserUpdate
 from services.audit_service import log_action
@@ -168,6 +177,29 @@ def update_user(
     return user
 
 
+# Records that remember who created them. Their user column is required, so deleting the person would
+# either fail (PostgreSQL enforces the link) or orphan the record.
+RECORDS_BY_USER = [
+    ("incident", "incidents", Incident.user_id),
+    ("audit", "audits", Audit.user_id),
+    ("inspection", "inspections", Inspection.user_id),
+    ("legal record", "legal records", Legal.user_id),
+    ("training record", "training records", Training.user_id),
+    ("scorecard", "scorecards", Scorecard.submitted_by),
+    ("hours entry", "hours entries", SiteHours.entered_by),
+]
+
+
+def _records_by(db: Session, user_id: int) -> list:
+    """Human-readable counts of what this user has recorded, e.g. ["3 incidents", "1 audit"]."""
+    found = []
+    for singular, plural, column in RECORDS_BY_USER:
+        count = db.query(column.class_).filter(column == user_id).count()
+        if count:
+            found.append(f"{count} {singular if count == 1 else plural}")
+    return found
+
+
 # Delete user (admin only)
 @router.delete("/{user_id}")
 def delete_user(
@@ -184,8 +216,27 @@ def delete_user(
     if user.role == "super_admin" and current_user.role != "super_admin":
         raise HTTPException(status_code=403, detail="Only a super admin can delete super admins")
 
-    db.delete(user)
-    db.commit()
+    records = _records_by(db, user.id)
+    if records:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{user.email} can't be deleted because they have recorded {', '.join(records)}. "
+                "Deactivate the account instead: it blocks sign-in but keeps those records."
+            ),
+        )
+
+    try:
+        # Settings only remember who last changed them; that link is optional, so just clear it
+        db.query(AppSetting).filter(AppSetting.updated_by == user.id).update({AppSetting.updated_by: None})
+        db.delete(user)
+        db.commit()
+    except IntegrityError:
+        db.rollback()  # something we don't know about still points at this user
+        raise HTTPException(
+            status_code=409,
+            detail=f"{user.email} is still linked to other records and can't be deleted. Deactivate the account instead.",
+        )
 
     log_action(
         db=db,

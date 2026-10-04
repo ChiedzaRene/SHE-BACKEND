@@ -7,7 +7,7 @@ The same document is shown on screen (JSON), exported to CSV and rendered to PDF
 three can never disagree. Rates come from services.safety_metrics (200,000-hour basis).
 """
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import func
@@ -351,3 +351,35 @@ def leaderboard_report(db: Session, period: str) -> dict:
                   "rows": rows}],
                 [f"Limits: TRIR {limits['trir_limit']:g}, LTIFR {limits['ltifr_limit']:g} per 200,000 hours. Sites with no hours "
                  "entered are listed last, unranked."])
+
+
+# ─── 5. Audit log export ────────────────────────────────────────────────────
+
+AUDIT_EXPORT_MAX_ROWS = 2000
+
+
+def _utc_text(ts) -> str:
+    """Timestamps are shown in UTC so an exported file means the same thing wherever it is read."""
+    if ts is None:
+        return ""
+    if getattr(ts, "tzinfo", None) is not None:
+        ts = ts.astimezone(timezone.utc)
+    return ts.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def audit_log_document(entries, total: int, filter_text: str) -> dict:
+    """A report document for the audit log (see the module docstring for the shape)."""
+    rows = [[_utc_text(e.timestamp), e.user_email, (e.user_role or "").replace("_", " "), e.action,
+             f"{e.resource} #{e.resource_id}" if e.resource_id is not None else e.resource, e.details or "",
+             e.ip_address or ""] for e in entries]
+    people = {e.user_email for e in entries}
+    first, last = (rows[-1][0], rows[0][0]) if rows else ("", "")  # newest first
+    kpis = [("Entries in this file", f"{len(rows):,}"), ("Matching entries", f"{total:,}"),
+            ("People involved", len(people)), ("Earliest", first[:16] or NA), ("Latest", last[:16] or NA)]
+    notes = ["Times are in UTC. This record is confidential: it names staff and their network addresses."]
+    if total > len(rows):
+        notes.insert(0, f"Showing the {len(rows):,} most recent of {total:,} matching entries; narrow the filters to see the rest.")
+    return _doc("audit-log", "Audit Log", filter_text or "All activity", kpis,
+                [{"title": "Entries (newest first)",
+                  "columns": ["When (UTC)", "User", "Role", "Action", "Area", "Details", "IP address"],
+                  "rows": rows}], notes)

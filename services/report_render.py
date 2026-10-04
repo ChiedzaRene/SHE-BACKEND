@@ -63,6 +63,26 @@ def to_csv(doc: dict) -> bytes:
     return ("﻿" + out.getvalue()).encode("utf-8")
 
 
+CHAR_PT = 4.7   # about the width of one 8pt Helvetica character, a little generous
+PAD_PT = 10     # cell padding left + right
+
+
+def _column_widths(columns, rows, total):
+    """Column widths that never split a word, with spare room going to the wordier columns.
+
+    Every column first gets enough width for its longest unbreakable word (an action name, an IP
+    address, a timestamp); whatever is left is shared out in proportion to how much text it holds.
+    """
+    cells = list(zip(columns, *rows)) if rows else [(c,) for c in columns]
+    longest_word = [max((len(w) for c in col for w in str(c).split()), default=1) for col in cells]
+    longest_text = [min(max(max(len(str(c)) for c in col), 4), 60) for col in cells]
+    minimum = [n * CHAR_PT + PAD_PT for n in longest_word]
+    if sum(minimum) >= total:  # very wide table: shrink everything evenly rather than overflow the page
+        return [m * total / sum(minimum) for m in minimum]
+    spare = total - sum(minimum)
+    return [m + spare * t / sum(longest_text) for m, t in zip(minimum, longest_text)]
+
+
 def _p(text, style):
     return Paragraph(escape(str(text)), style)
 
@@ -99,7 +119,7 @@ def to_pdf(doc: dict) -> bytes:
     story += [top, Spacer(1, 6 * mm)]
 
     if doc["kpis"]:
-        per_row = 4
+        per_row = {3: 3, 5: 5, 6: 3}.get(len(doc["kpis"]), 4)  # fill rows evenly, no orphan box
         cells = [[_p(k["value"], kpi_v), _p(k["label"], kpi_l)] for k in doc["kpis"]]
         rows = []
         for i in range(0, len(cells), per_row):
@@ -120,10 +140,7 @@ def to_pdf(doc: dict) -> bytes:
             story.append(_p("No records.", note))
             continue
         data = [[_p(c, head) for c in t["columns"]]] + [[_p(c, cell) for c in row] for row in t["rows"]]
-        # Give long text columns more room than short ones
-        longest = [max(len(str(c)) for c in col) for col in zip(t["columns"], *t["rows"])]
-        weights = [min(max(n, 4), 60) for n in longest]
-        widths = [width * w / sum(weights) for w in weights]
+        widths = _column_widths(t["columns"], t["rows"], width)
         table = Table(data, colWidths=widths, repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG), ("GRID", (0, 0), (-1, -1), 0.4, GRID),
