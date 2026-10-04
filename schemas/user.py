@@ -72,6 +72,7 @@ class UserResponse(BaseModel):
     role: str
     site_id: Optional[int] = None
     is_active: bool = True
+    must_change_password: bool = False
 
     class Config:
         from_attributes = True

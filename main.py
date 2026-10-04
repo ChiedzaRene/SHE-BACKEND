@@ -10,6 +10,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from database import engine, Base
+from services.migrations import ensure_new_columns
 from models.user import User
 from models.site import Site
 from models.incident import Incident
@@ -142,6 +143,7 @@ def ensure_indexes() -> None:
 # Create tables
 Base.metadata.create_all(bind=engine)
 ensure_inspections_file_url_column()
+ensure_new_columns(engine)
 ensure_indexes()
 
 # Register Routers

@@ -7,6 +7,7 @@ from models.user import User
 from schemas.user import UserCreate, UserResponse, UserSelfUpdate, UserUpdate
 from services.audit_service import log_action
 from services.auth_services import get_current_user, hash_password, require_role
+from services.passwords import reset_by_admin
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -83,6 +84,7 @@ def create_user(
         full_name=user.full_name,
         role=user.role,
         site_id=user.site_id,
+        must_change_password=True,  # temporary password: the user chooses their own at first sign-in
     )
     db.add(new_user)
     db.commit()
@@ -136,8 +138,7 @@ def update_user(
         user.site_id = user_data.site_id
     if user_data.is_active is not None:
         user.is_active = user_data.is_active
-    if user_data.password:
-        user.password = hash_password(user_data.password)
+    was_reset = bool(user_data.password) and reset_by_admin(db, user, current_user, user_data.password)
 
     db.commit()
     db.refresh(user)
@@ -151,6 +152,19 @@ def update_user(
         details=f"Updated user #{user.id} ({user.email})",
         ip_address=request.client.host,
     )
+    if was_reset:
+        log_action(
+            db=db,
+            user=current_user,
+            action="RESET_PASSWORD",
+            resource="users",
+            resource_id=user.id,
+            details=(
+                f"Password reset by admin for {user.email}; "
+                "they must choose a new one at next sign-in and were signed out everywhere"
+            ),
+            ip_address=request.client.host,
+        )
     return user
 
 

@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.user import User
 from schemas.user import UserResponse, UserUpdate
-from services.auth_services import hash_password, require_role
+from services.auth_services import require_role
+from services.passwords import reset_by_admin
 from services.audit_service import log_action
 
 router = APIRouter(prefix="/admin/users", tags=["Super Admin User Management"])
@@ -38,10 +39,11 @@ def update_user_status_or_role(
     if user.id == current_user.id and update_data.get("is_active") is False:
         raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
 
+    was_reset = False
     for key, value in update_data.items():
         if key == "password":
             if value:
-                user.password = hash_password(value)
+                was_reset = reset_by_admin(db, user, current_user, value)
         else:
             setattr(user, key, value)
 
@@ -57,5 +59,17 @@ def update_user_status_or_role(
         resource_id=user.id,
         details=f"Updated user {user.email} (Role: {user.role}, Active: {user.is_active})"
     )
+    if was_reset:
+        log_action(
+            db=db,
+            user=current_user,
+            action="RESET_PASSWORD",
+            resource="users",
+            resource_id=user.id,
+            details=(
+                f"Password reset by admin for {user.email}; "
+                "they must choose a new one at next sign-in and were signed out everywhere"
+            ),
+        )
 
     return user

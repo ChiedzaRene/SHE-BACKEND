@@ -7,13 +7,14 @@ from database import get_db
 from models.user import User
 from schemas.user import ChangePassword, UserCreate, UserResponse, Token
 from services.audit_service import log_action
+from services.passwords import set_new_password
 from services.auth_services import (
     get_current_user,
     verify_password,
     require_role,
     hash_password,
     authenticate_user,
-    create_access_token,
+    issue_token,
     get_user_by_email
 )
 
@@ -50,7 +51,8 @@ def register(
         password=hash_password(user_data.password),
         full_name=user_data.full_name,
         role=user_data.role,
-        site_id=user_data.site_id
+        site_id=user_data.site_id,
+        must_change_password=True,  # an admin chose this password, so the user picks their own at first sign-in
     )
 
     db.add(new_user)
@@ -82,14 +84,7 @@ def login(
             detail="Account is disabled. Contact your administrator."
         )
 
-    access_token = create_access_token(data={
-        "sub": user.email,
-        "role": user.role,
-        "user_id": user.id,
-        "site_id": user.site_id
-    })
-
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": issue_token(user), "token_type": "bearer"}
 
 
 @router.post("/change-password")
@@ -106,7 +101,8 @@ def change_password(
     if payload.new_password == payload.current_password:
         raise HTTPException(status_code=400, detail="New password must be different from the current one")
 
-    current_user.password = hash_password(payload.new_password)
+    # Every other session is signed out; the caller gets a fresh token below so this one continues
+    set_new_password(current_user, payload.new_password, force_change=False, revoke_sessions=True)
     db.commit()
     log_action(
         db=db,
@@ -114,7 +110,7 @@ def change_password(
         action="CHANGE_PASSWORD",
         resource="users",
         resource_id=current_user.id,
-        details="User changed their own password",
+        details="User changed their own password; all other sessions were signed out",
         ip_address=request.client.host if request.client else None,
     )
-    return {"message": "Password changed"}
+    return {"message": "Password changed", "access_token": issue_token(current_user), "token_type": "bearer"}

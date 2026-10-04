@@ -26,6 +26,7 @@ def own_account(client):
     db.add(User(id=90, email="me90@x.com", password=hash_password(OLD), role="she_team", full_name="Before"))
     db.commit()
     db.close()
+    # A dict so tests can swap in the fresh token a password change returns
     yield {"Authorization": "Bearer " + create_access_token({"sub": "me90@x.com"})}
     db = SessionLocal()
     db.query(User).filter(User.id == 90).delete()
@@ -59,8 +60,13 @@ def test_change_password_rules(client, own_account):
 
 
 def test_change_password_success_and_audit(client, own_account):
+    old_headers = dict(own_account)
     r = client.post("/auth/change-password", json={"current_password": OLD, "new_password": NEW}, headers=own_account)
     assert r.status_code == 200
+    # Changing the password signs out older sessions; the reply carries a fresh token for this one
+    assert client.get("/users/me", headers=old_headers).status_code == 401
+    own_account["Authorization"] = "Bearer " + r.json()["access_token"]
+    assert client.get("/users/me", headers=own_account).status_code == 200
     assert stored_password_ok(NEW) and not stored_password_ok(OLD)
     db = SessionLocal()
     entry = db.query(AuditLog).filter(AuditLog.action == "CHANGE_PASSWORD", AuditLog.user_email == "me90@x.com").first()

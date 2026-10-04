@@ -65,6 +65,19 @@ All three come from one builder (`services/reports.py`), so they always agree.
 * `GET /audit-logs/` (super admin only): filter by `user`, `action`, `resource`, `start`, `end`; page with
   `limit`/`offset`; total in `X-Total-Count`. `/audit-logs/facets` lists the actions and areas.
 
+## Password security
+
+* **Sign out everywhere:** each user has a `token_version`, bumped whenever their password changes or is
+  reset. Tokens carry the version they were issued with, so older sessions stop working. When you change
+  your *own* password the response includes a fresh token so that session continues.
+* **Forced change:** accounts an admin creates, and accounts whose password an admin resets, are flagged
+  `must_change_password`. Until the user picks their own password the API answers `403` with code
+  `password_change_required` for everything except `GET/PATCH /users/me` and `POST /auth/change-password`.
+  An admin setting their *own* password through the Users page is a normal change (nothing forced).
+* **Audit:** admin resets are logged as `RESET_PASSWORD` (never the password).
+* The two new columns are added to existing databases automatically at startup (`services/migrations.py`);
+  tokens issued before this feature keep working until their normal expiry.
+
 ## API notes
 
 * List endpoints accept optional `?limit=&offset=`; with a limit the total is returned in the
