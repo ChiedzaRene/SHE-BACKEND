@@ -7,6 +7,7 @@ from database import get_db
 from models.user import User
 from schemas.user import ChangePassword, UserCreate, UserResponse, Token
 from services.audit_service import log_action, log_event
+from services.login_throttle import record_failure, record_success, seconds_until_allowed
 from services.passwords import set_new_password
 from services.auth_services import (
     get_current_user,
@@ -71,17 +72,26 @@ def register(
 
 
 @router.post("/login", response_model=Token)
-@limiter.limit("5/minute")  # max 5 login attempts per minute per IP
+@limiter.limit("60/minute")  # per-IP ceiling only; per-account guessing is limited by login_throttle
 def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+    ip = request.client.host if request.client else None
+    wait = seconds_until_allowed(form_data.username)
+    if wait:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed attempts for this account. Please wait {-(-wait // 60)} minute(s) and try again.",
+            headers={"Retry-After": str(wait)},
+        )
+
     # OAuth2PasswordRequestForm uses "username" field — we treat it as email
     user = authenticate_user(db, form_data.username, form_data.password)
-    ip = request.client.host if request.client else None
 
     if not user:
+        record_failure(form_data.username)
         # Recorded so an admin can see someone guessing a password. The typed password is never stored.
         known = get_user_by_email(db, form_data.username)
         log_event(
@@ -107,6 +117,7 @@ def login(
             detail="Account is disabled. Contact your administrator."
         )
 
+    record_success(form_data.username)
     log_action(db=db, user=user, action="LOGIN", resource="auth", details="Signed in", ip_address=ip)
     return {"access_token": issue_token(user), "token_type": "bearer"}
 

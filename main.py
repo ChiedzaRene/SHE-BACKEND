@@ -146,6 +146,32 @@ ensure_inspections_file_url_column()
 ensure_new_columns(engine)
 ensure_indexes()
 
+
+def _purge_audit_logs() -> None:
+    from database import SessionLocal
+    from services.retention import purge_old_audit_logs
+
+    db = SessionLocal()
+    try:
+        purge_old_audit_logs(db)
+    except Exception:
+        logging.getLogger("she_portal").exception("Audit log retention failed")
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+async def _daily_housekeeping():
+    import asyncio
+
+    async def loop():
+        while True:
+            await asyncio.to_thread(_purge_audit_logs)
+            await asyncio.sleep(24 * 3600)
+
+    app.state.housekeeping = asyncio.create_task(loop())
+
+
 # Register Routers
 app.include_router(auth.router)
 app.include_router(sites.router)

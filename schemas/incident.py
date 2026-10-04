@@ -1,6 +1,7 @@
 from datetime import datetime
 from datetime import timedelta
 from typing import Optional
+import html
 import bleach
 from pydantic import BaseModel, Field, field_validator
 
@@ -8,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 def sanitize_text(value: Optional[str]) -> Optional[str]:
     """Strips HTML and script tags from text inputs to prevent XSS attacks."""
     if isinstance(value, str):
-        return bleach.clean(value, tags=[], strip=True).strip()
+        return html.unescape(bleach.clean(value, tags=[], strip=True)).strip()
     return value
 
 
