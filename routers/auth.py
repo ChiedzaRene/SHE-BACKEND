@@ -5,8 +5,11 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from database import get_db
 from models.user import User
-from schemas.user import UserCreate, UserResponse, Token
+from schemas.user import ChangePassword, UserCreate, UserResponse, Token
+from services.audit_service import log_action
 from services.auth_services import (
+    get_current_user,
+    verify_password,
     require_role,
     hash_password,
     authenticate_user,
@@ -87,3 +90,31 @@ def login(
     })
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/change-password")
+@limiter.limit("5/minute")  # guessing the current password is the only thing this endpoint can be abused for
+def change_password(
+    request: Request,
+    payload: ChangePassword,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 400, not 401: the frontend signs the user out on any 401
+    if not verify_password(payload.current_password, current_user.password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status_code=400, detail="New password must be different from the current one")
+
+    current_user.password = hash_password(payload.new_password)
+    db.commit()
+    log_action(
+        db=db,
+        user=current_user,
+        action="CHANGE_PASSWORD",
+        resource="users",
+        resource_id=current_user.id,
+        details="User changed their own password",
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"message": "Password changed"}

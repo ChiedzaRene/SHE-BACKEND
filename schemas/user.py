@@ -45,6 +45,21 @@ class UserUpdate(BaseModel):
         return sanitize_text(value)
 
 
+class UserSelfUpdate(BaseModel):
+    """What a user may change about themselves. Email and role are deliberately not here."""
+    full_name: str = Field(..., min_length=1, max_length=150)
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def clean_name(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_text(value)
+
+
+class ChangePassword(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)

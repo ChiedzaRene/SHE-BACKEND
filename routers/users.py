@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.user import User
-from schemas.user import UserCreate, UserResponse, UserUpdate
+from schemas.user import UserCreate, UserResponse, UserSelfUpdate, UserUpdate
 from services.audit_service import log_action
 from services.auth_services import get_current_user, hash_password, require_role
 
@@ -23,6 +23,29 @@ def get_all_users(
 # Get current user profile
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+# Update own profile (name only; email and role are managed by admins)
+@router.patch("/me", response_model=UserResponse)
+def update_me(
+    request: Request,
+    data: UserSelfUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.full_name = data.full_name
+    db.commit()
+    db.refresh(current_user)
+    log_action(
+        db=db,
+        user=current_user,
+        action="UPDATE_PROFILE",
+        resource="users",
+        resource_id=current_user.id,
+        details="User updated their own name",
+        ip_address=request.client.host if request.client else None,
+    )
     return current_user
 
 

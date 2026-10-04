@@ -20,9 +20,8 @@ from models.inspections import Inspection
 from models.legal import Legal
 from models.site import Site
 from models.training import Training
+from services.settings import get_safety_limits
 from services.safety_metrics import (
-    LTIFR_LIMIT,
-    TRIR_LIMIT,
     combine,
     compute_range,
     month_start,
@@ -80,10 +79,10 @@ def _doc(kind, title, subtitle, kpis, tables, notes=None) -> dict:
     }
 
 
-def _status(stats: dict) -> str:
+def _status(stats: dict, limits: dict) -> str:
     if stats["trir"] is None and stats["ltifr"] is None:
         return "No hours data"
-    over = (stats["trir"] or 0) > TRIR_LIMIT or (stats["ltifr"] or 0) > LTIFR_LIMIT
+    over = (stats["trir"] or 0) > limits["trir_limit"] or (stats["ltifr"] or 0) > limits["ltifr_limit"]
     return "Action required" if over else "Within limits"
 
 
@@ -324,6 +323,7 @@ def leaderboard_report(db: Session, period: str) -> dict:
     if period not in ("12m", "ytd"):
         raise ReportError("period must be 12m or ytd")
     names = _site_names(db)
+    limits = get_safety_limits(db)
     stats = compute_range(db, list(names), window_start(period), None)
     actions = _action_counts(db, list(names), datetime.now())
     total = combine(stats.values())
@@ -338,8 +338,8 @@ def leaderboard_report(db: Session, period: str) -> dict:
         rows.append([rank if s["trir"] is not None else "", names[sid],
                      _num(s["hours_worked"]) if s["hours_reported"] else NA,
                      s["recordable_incidents"], s["lost_time_injuries"],
-                     _rate(s["trir"]), _rate(s["ltifr"]), a["open"], a["overdue"], _status(s)])
-    flagged = sum(1 for sid in names if _status(stats[sid]) == "Action required")
+                     _rate(s["trir"]), _rate(s["ltifr"]), a["open"], a["overdue"], _status(s, limits)])
+    flagged = sum(1 for sid in names if _status(stats[sid], limits) == "Action required")
     label = "Rolling 12 months" if period == "12m" else f"Year to date {date.today().year}"
     kpis = [("Sites", len(names)), ("Sites reporting hours", sum(1 for s in stats.values() if s["hours_reported"])),
             ("Group TRIR", _rate(total["trir"])), ("Group LTIFR", _rate(total["ltifr"])),
@@ -349,5 +349,5 @@ def leaderboard_report(db: Session, period: str) -> dict:
                   "columns": ["Rank", "Site", "Hours", "Recordable", "Lost-time", "TRIR", "LTIFR",
                               "Open actions", "Overdue", "Status"],
                   "rows": rows}],
-                [f"Limits: TRIR {TRIR_LIMIT}, LTIFR {LTIFR_LIMIT} per 200,000 hours. Sites with no hours "
+                [f"Limits: TRIR {limits['trir_limit']:g}, LTIFR {limits['ltifr_limit']:g} per 200,000 hours. Sites with no hours "
                  "entered are listed last, unranked."])

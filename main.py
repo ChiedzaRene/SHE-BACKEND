@@ -19,11 +19,12 @@ from models.legal import Legal
 from models.training import Training
 from models.scorecard import Scorecard, ScorecardItem
 from models.site_hours import SiteHours
+from models.app_setting import AppSetting
 from models.audit_log import AuditLog
 
 from routers import (
     auth, scorecard, sites, incidents, audits, 
-    legal, trainings, users, corrective_actions, super_admin, site_hours, reports
+    legal, trainings, users, corrective_actions, super_admin, site_hours, reports, settings
 )
 from routers.inspections import router as inspections, uploads_router
 from routers.audit_log import router as audit_log_router
@@ -159,6 +160,7 @@ app.include_router(audit_log_router)
 app.include_router(super_admin.router)
 app.include_router(site_hours.router)
 app.include_router(reports.router)
+app.include_router(settings.router)
 
 @app.get("/")
 def root():
