@@ -21,6 +21,7 @@ from models.legal import Legal
 from models.site import Site
 from models.training import Training
 from services.settings import get_safety_limits
+from services.audit_labels import action_label, resource_label
 from services.safety_metrics import (
     combine,
     compute_range,
@@ -369,8 +370,9 @@ def _utc_text(ts) -> str:
 
 def audit_log_document(entries, total: int, filter_text: str) -> dict:
     """A report document for the audit log (see the module docstring for the shape)."""
-    rows = [[_utc_text(e.timestamp), e.user_email, (e.user_role or "").replace("_", " "), e.action,
-             f"{e.resource} #{e.resource_id}" if e.resource_id is not None else e.resource, e.details or "",
+    rows = [[_utc_text(e.timestamp), e.user_email, (e.user_role or "").replace("_", " "), action_label(e.action),
+             f"{resource_label(e.resource)} #{e.resource_id}" if e.resource_id is not None else resource_label(e.resource),
+             e.details or "",
              e.ip_address or ""] for e in entries]
     people = {e.user_email for e in entries}
     first, last = (rows[-1][0], rows[0][0]) if rows else ("", "")  # newest first

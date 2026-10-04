@@ -141,7 +141,7 @@ def test_audit_pdf_uses_the_same_filters_and_validates_them(client, auth):
     db = SessionLocal()
     last = db.query(AuditLog).filter(AuditLog.action == "EXPORT_AUDIT_LOG").order_by(AuditLog.id.desc()).first()
     db.close()
-    assert "action DELETE_USER" in last.details and "from 2000-01-01" in last.details
+    assert "action: User deleted" in last.details and "from 2000-01-01" in last.details
 
 
 def test_pdf_survives_markup_in_log_details(client, auth):
@@ -162,10 +162,10 @@ def test_document_content_and_truncation():
             self.details, self.ip_address = f"entry {i}", "10.0.0.1"
 
     entries = [E(i) for i in range(5)]
-    doc = audit_log_document(entries, 5, "action UPDATE_SITE")
-    assert doc["subtitle"] == "action UPDATE_SITE"
+    doc = audit_log_document(entries, 5, "action: Site updated")
+    assert doc["subtitle"] == "action: Site updated"
     assert doc["tables"][0]["columns"][0] == "When (UTC)"
-    assert doc["tables"][0]["rows"][0][:5] == ["2026-10-04 12:00:00", "u0@x.com", "super admin", "UPDATE_SITE", "sites #0"]
+    assert doc["tables"][0]["rows"][0][:5] == ["2026-10-04 12:00:00", "u0@x.com", "super admin", "Site updated", "Sites #0"]
     assert {k["label"]: k["value"] for k in doc["kpis"]}["People involved"] == "3"
     assert not any("most recent" in n for n in doc["notes"])
 
@@ -173,3 +173,33 @@ def test_document_content_and_truncation():
     assert any("most recent" in n and "narrow the filters" in n for n in capped["notes"])
     empty = audit_log_document([], 0, "")
     assert empty["subtitle"] == "All activity" and empty["tables"][0]["rows"] == []
+
+
+def test_every_action_the_code_writes_has_a_plain_english_name():
+    """Guards against adding a new log_action(...) code and showing it to people as RAW_CODE."""
+    import pathlib
+    import re
+    from services.audit_labels import ACTION_LABELS, RESOURCE_LABELS
+    root = pathlib.Path(__file__).resolve().parent.parent
+    code = "\n".join(p.read_text() for d in ("routers", "services") for p in (root / d).glob("*.py"))
+    actions = set(re.findall(r'action="([A-Z_]+)"', code))
+    resources = set(re.findall(r'resource="([a-z_]+)"', code))
+    assert actions - set(ACTION_LABELS) == set(), f"add labels for {actions - set(ACTION_LABELS)}"
+    assert resources - set(RESOURCE_LABELS) == set(), f"add labels for {resources - set(RESOURCE_LABELS)}"
+
+
+def test_audit_log_text_is_plain_not_double_encoded(client, auth):
+    db = SessionLocal()
+    db.add(AuditLog(user_email="enc@x.com", user_role="admin", action="TEST_ENC", resource="t",
+                    details="TRIR limit 1.5 -> 2 & Pump <3> <script>alert(1)</script>ok", ip_address="1.1.1.1"))
+    db.commit()
+    db.close()
+    row = client.get("/audit-logs/?action=TEST_ENC", headers=auth["super"]).json()[0]
+    d = row["details"]
+    assert d.startswith("TRIR limit 1.5 -> 2 & Pump")          # arrow and ampersand come back as typed
+    assert "&gt;" not in d and "&amp;" not in d and "&lt;" not in d
+    assert "<script" not in d and "</script" not in d           # tags are still stripped
+    db = SessionLocal()
+    db.query(AuditLog).filter(AuditLog.action == "TEST_ENC").delete()
+    db.commit()
+    db.close()

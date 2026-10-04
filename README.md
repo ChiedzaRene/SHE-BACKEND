@@ -65,7 +65,8 @@ All three come from one builder (`services/reports.py`), so they always agree.
 * `GET /audit-logs/export` (super admin only): the filtered log as a PDF (newest 2000 entries, UTC).
   Exports are logged as `EXPORT_AUDIT_LOG`.
 * `GET /audit-logs/` (super admin only): filter by `user`, `action`, `resource`, `start`, `end`; page with
-  `limit`/`offset`; total in `X-Total-Count`. `/audit-logs/facets` lists the actions and areas.
+  `limit`/`offset`; total in `X-Total-Count`. `/audit-logs/facets` lists the actions, sections and people in the log, with plain-English names
+  (`services/audit_labels.py`; a test fails if a new action is added without a label).
 
 ## Deleting users
 

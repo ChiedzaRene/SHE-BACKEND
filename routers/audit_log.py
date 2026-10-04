@@ -9,6 +9,7 @@ from database import get_db
 from models.audit_log import AuditLog
 from models.user import User
 from schemas.audit_log import AuditLogResponse
+from services.audit_labels import ACTION_LABELS, RESOURCE_LABELS, action_label, resource_label
 from services.audit_service import log_action
 from services.auth_services import require_role
 from services.report_render import to_pdf
@@ -37,8 +38,8 @@ def _apply_filters(query, user, resource, action, start, end):
 
 
 def _describe_filters(user, resource, action, start, end) -> str:
-    parts = [f"user contains '{user}'" if user else "", f"action {action}" if action else "",
-             f"area {resource}" if resource else "",
+    parts = [f"user contains '{user}'" if user else "", f"action: {action_label(action)}" if action else "",
+             f"area: {resource_label(resource)}" if resource else "",
              f"from {start.isoformat()}" if start else "", f"to {end.isoformat()}" if end else ""]
     return ", ".join(p for p in parts if p)
 
@@ -74,10 +75,16 @@ def get_audit_log_facets(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("super_admin")),
 ):
-    """The actions and resources that appear in the log, for the filter dropdowns."""
+    """The actions, areas and people that appear in the log, with plain-English names, for the filters."""
+    actions = [a for (a,) in db.query(AuditLog.action).distinct()]
+    resources = [r for (r,) in db.query(AuditLog.resource).distinct()]
     return {
-        "actions": [a for (a,) in db.query(AuditLog.action).distinct().order_by(AuditLog.action)],
-        "resources": [r for (r,) in db.query(AuditLog.resource).distinct().order_by(AuditLog.resource)],
+        # sorted by the name people will read, not by the code
+        "actions": sorted(actions, key=lambda a: action_label(a).lower()),
+        "action_labels": {a: action_label(a) for a in set(actions) | set(ACTION_LABELS)},
+        "resources": sorted(resources, key=lambda r: resource_label(r).lower()),
+        "resource_labels": {r: resource_label(r) for r in set(resources) | set(RESOURCE_LABELS)},
+        "users": [u for (u,) in db.query(AuditLog.user_email).distinct().order_by(AuditLog.user_email)],
     }
 
 
