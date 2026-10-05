@@ -197,7 +197,7 @@ async def _daily_housekeeping():
     async def loop():
         while True:
             await asyncio.to_thread(_purge_audit_logs)
-            await asyncio.sleep(24 * 3600)
+            await asyncio.sleep(3600)  # hourly: opened notifications go 24 hours after opening
 
     app.state.housekeeping = asyncio.create_task(loop())
 

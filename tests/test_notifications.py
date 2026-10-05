@@ -196,3 +196,66 @@ def test_staff_directory_lists_active_people_for_assigning(client, auth):
     assert r.status_code == 200
     assert {"name": "Manager", "email": "mgr@x.com"} in r.json()
     assert client.get("/users/directory").status_code == 401
+
+
+def test_mark_all_or_some_as_unread_again(client, auth):
+    log_injury(client, auth)
+    client.post("/audits/", json={"site_id": 1, "criteria": "Housekeeping", "score": 90}, headers=auth["mgr"])
+    client.post("/notifications/read", json={"all": True}, headers=auth["admin"])
+    assert inbox(client, auth["admin"])["unread"] == 0
+
+    ids = [i["id"] for i in inbox(client, auth["admin"])["items"]]
+    assert client.post("/notifications/unread", json={"ids": ids[:1]}, headers=auth["admin"]).json()["marked"] == 1
+    assert inbox(client, auth["admin"])["unread"] == 1
+    assert client.post("/notifications/unread", json={"all": True}, headers=auth["admin"]).json()["marked"] == 1
+    data = inbox(client, auth["admin"])
+    assert data["unread"] == 2 and all(i["read_at"] is None for i in data["items"])
+    # someone else's can't be touched, and an empty request does nothing
+    client.post("/notifications/read", json={"all": True}, headers=auth["admin"])
+    assert client.post("/notifications/unread", json={"ids": ids}, headers=auth["she"]).json()["marked"] == 0
+    assert client.post("/notifications/unread", json={}, headers=auth["admin"]).json()["marked"] == 0
+
+
+def test_opened_notifications_disappear_24_hours_after_opening(client, auth):
+    from datetime import timedelta, timezone
+    from services.retention import purge_old_notifications
+
+    log_injury(client, auth)
+    client.post("/audits/", json={"site_id": 1, "criteria": "Housekeeping", "score": 90}, headers=auth["mgr"])
+    items = inbox(client, auth["admin"])["items"]
+    opened_long_ago, opened_recently = items[0]["id"], items[1]["id"]
+    client.post("/notifications/read", json={"ids": [opened_recently]}, headers=auth["admin"])
+
+    db = SessionLocal()
+    old = db.get(Notification, opened_long_ago)
+    old.read_at = datetime.now(timezone.utc) - timedelta(hours=25)
+    db.commit()
+    db.close()
+
+    shown = {i["id"] for i in inbox(client, auth["admin"])["items"]}
+    assert opened_long_ago not in shown and opened_recently in shown   # hidden straight away
+    # and it can't be brought back by "mark all as unread"
+    client.post("/notifications/unread", json={"all": True}, headers=auth["admin"])
+    assert opened_long_ago not in {i["id"] for i in inbox(client, auth["admin"])["items"]}
+
+    db = SessionLocal()
+    assert purge_old_notifications(db) >= 1                              # then deleted by housekeeping
+    assert db.get(Notification, opened_long_ago) is None
+    assert db.get(Notification, opened_recently) is not None
+    db.close()
+
+
+def test_unread_notifications_are_never_removed_for_age_under_90_days(client, auth):
+    from datetime import timedelta, timezone
+    from services.retention import purge_old_notifications
+
+    log_injury(client, auth)
+    nid = inbox(client, auth["admin"])["items"][0]["id"]
+    db = SessionLocal()
+    n = db.get(Notification, nid)
+    n.created_at = datetime.now(timezone.utc) - timedelta(days=30)
+    db.commit()
+    purge_old_notifications(db)
+    assert db.get(Notification, nid) is not None
+    db.close()
+    assert nid in {i["id"] for i in inbox(client, auth["admin"])["items"]}

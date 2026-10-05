@@ -32,10 +32,13 @@ NOTIFICATION_DAYS = 90
 
 
 def purge_old_notifications(db: Session, days: int = NOTIFICATION_DAYS, now: datetime = None) -> int:
-    """Notifications are reminders, not records: drop them after 90 days."""
+    """Notifications are reminders, not records: drop opened ones after 24 hours and any after 90 days."""
     from models.notification import Notification
 
-    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=days)
-    removed = db.query(Notification).filter(Notification.created_at < cutoff).delete(synchronize_session=False)
+    now = now or datetime.now(timezone.utc)
+    old = Notification.created_at < now - timedelta(days=days)
+    # opened notifications are removed 24 hours after being opened
+    opened_long_ago = Notification.read_at < now - timedelta(hours=24)
+    removed = db.query(Notification).filter(old | opened_long_ago).delete(synchronize_session=False)
     db.commit()
     return removed
