@@ -112,3 +112,16 @@ def test_incident_summary_counts_and_site_scope(client, auth):
     assert mine["total"] == len(client.get("/incidents/", headers=auth["mgr"]).json())
     assert {s["site_id"] for s in mine["by_site"]} <= {1}
     assert client.get("/incidents/summary").status_code == 401
+
+
+def test_site_without_a_phone_number_can_be_saved(client, auth):
+    body = {"name": "No Phone Depot", "address": "1 Test Road", "latitude": -17.8, "longitude": 31.0, "contact_number": ""}
+    r = client.post("/sites/", json=body, headers=auth["admin"])
+    assert r.status_code in (200, 201), r.text
+    assert r.json()["contact_number"] is None
+    site_id = r.json()["id"]
+    edited = client.put(f"/sites/{site_id}", json={**body, "contact_number": "  "}, headers=auth["admin"])
+    assert edited.status_code == 200 and edited.json()["contact_number"] is None
+    bad = client.post("/sites/", json={**body, "name": "Bad Phone", "contact_number": "call me"}, headers=auth["admin"])
+    assert bad.status_code == 422
+    client.delete(f"/sites/{site_id}", headers=auth["admin"])

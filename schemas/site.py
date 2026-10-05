@@ -1,7 +1,7 @@
 from typing import Optional
 import html
 import bleach
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 def sanitize_text(value: Optional[str]) -> Optional[str]:
@@ -35,8 +35,12 @@ class SiteCreate(BaseModel):
 
     @field_validator("name", "address", "contact_number", mode="before")
     @classmethod
-    def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
-        return sanitize_text(value)
+    def clean_text_inputs(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
+        value = sanitize_text(value)
+        # The contact number is optional: a blank box means "no number", not an invalid one
+        if info.field_name == "contact_number" and value == "":
+            return None
+        return value
 
 
 class SiteUpdate(BaseModel):
@@ -52,8 +56,12 @@ class SiteUpdate(BaseModel):
 
     @field_validator("name", "address", "contact_number", mode="before")
     @classmethod
-    def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
-        return sanitize_text(value)
+    def clean_text_inputs(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
+        value = sanitize_text(value)
+        # The contact number is optional: a blank box means "no number", not an invalid one
+        if info.field_name == "contact_number" and value == "":
+            return None
+        return value
 
 
 class SiteResponse(BaseModel):
