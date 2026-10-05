@@ -33,8 +33,10 @@ class IncidentCreate(BaseModel):
     lost_time_days: Optional[int] = Field(default=0, ge=0)
     # When the incident actually happened; TRIR/LTIFR files it under this month
     occurred_at: Optional[datetime] = None
+    # Name of the person hurt (injuries only)
+    injured_person: Optional[str] = Field(default=None, max_length=150)
 
-    @field_validator("type", "description", "severity", mode="before")
+    @field_validator("type", "description", "severity", "injured_person", mode="before")
     @classmethod
     def clean_string_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
@@ -56,8 +58,10 @@ class IncidentUpdate(BaseModel):
     total_hours_worked: Optional[int] = Field(default=None, ge=0)
     lost_time_days: Optional[int] = Field(default=None, ge=0)
     occurred_at: Optional[datetime] = None
+    # Name of the person hurt (injuries only)
+    injured_person: Optional[str] = Field(default=None, max_length=150)
 
-    @field_validator("type", "description", "severity", mode="before")
+    @field_validator("type", "description", "severity", "injured_person", mode="before")
     @classmethod
     def clean_string_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
@@ -80,6 +84,7 @@ class IncidentResponse(BaseModel):
     total_hours_worked: Optional[int] = 0
     lost_time_days: Optional[int] = 0
     occurred_at: Optional[datetime] = None
+    injured_person: Optional[str] = None
 
     class Config:
         from_attributes = True

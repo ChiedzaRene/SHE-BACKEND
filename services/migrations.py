@@ -28,6 +28,9 @@ NEW_COLUMNS = {
         ("must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("token_version", "INTEGER NOT NULL DEFAULT 0"),
     ],
+    "incidents": [
+        ("injured_person", "VARCHAR(150)"),
+    ],
 }
 
 

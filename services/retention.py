@@ -26,3 +26,16 @@ def purge_old_audit_logs(db: Session, days: int = None, now: datetime = None) ->
     if removed:
         logger.info("Audit log retention: removed %s entries older than %s days", removed, days)
     return removed
+
+
+NOTIFICATION_DAYS = 90
+
+
+def purge_old_notifications(db: Session, days: int = NOTIFICATION_DAYS, now: datetime = None) -> int:
+    """Notifications are reminders, not records: drop them after 90 days."""
+    from models.notification import Notification
+
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    removed = db.query(Notification).filter(Notification.created_at < cutoff).delete(synchronize_session=False)
+    db.commit()
+    return removed

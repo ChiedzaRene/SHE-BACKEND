@@ -17,6 +17,8 @@ class Incident(Base):
     total_hours_worked = Column(Integer)
     lost_time_days = Column(Integer, default=0)
     occurred_at = Column(DateTime, nullable=True)
+    # Who was hurt (injuries only). Kept as a name: the person may not have an account.
+    injured_person = Column(String(150), nullable=True)
     
 
 

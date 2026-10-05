@@ -299,13 +299,13 @@ def incident_register(db: Session, site_id: Optional[int], start: Optional[date]
     rows_q = query.order_by(when.desc()).limit(MAX_REGISTER_ROWS).all()
 
     rows = [[inc.id, names.get(inc.site_id, ""), when_val.strftime("%Y-%m-%d %H:%M") if when_val else "",
-             (inc.type or "").title(), (inc.severity or "").title(), inc.lost_time_days or 0,
-             "Yes" if inc.resolved else "No", inc.description or ""]
+             (inc.type or "").title(), inc.injured_person or "", (inc.severity or "").title(),
+             inc.lost_time_days or 0, "Yes" if inc.resolved else "No", inc.description or ""]
             for inc, when_val in rows_q]
     injuries = sum(1 for r in rows if r[3].lower() == "injury")
     kpis = [("Incidents", total), ("Injuries", injuries),
-            ("With lost time", sum(1 for r in rows if r[5] > 0)),
-            ("Resolved", sum(1 for r in rows if r[6] == "Yes"))]
+            ("With lost time", sum(1 for r in rows if r[6] > 0)),
+            ("Resolved", sum(1 for r in rows if r[7] == "Yes"))]
     notes = []
     if total > MAX_REGISTER_ROWS:
         notes.append(f"Showing the most recent {MAX_REGISTER_ROWS} of {total} incidents; narrow the dates.")
@@ -313,7 +313,8 @@ def incident_register(db: Session, site_id: Optional[int], start: Optional[date]
     subtitle = f"{scope} · {start.isoformat()} to {end.isoformat()}" + (f" · {', '.join(filters)}" if filters else "")
     return _doc("incidents", "Incident Register", subtitle, kpis,
                 [{"title": "Incidents",
-                  "columns": ["ID", "Site", "Occurred", "Type", "Severity", "Lost days", "Resolved", "Description"],
+                  "columns": ["ID", "Site", "Occurred", "Type", "Injured person", "Severity", "Lost days", "Resolved",
+                              "Description"],
                   "rows": rows}], notes)
 
 

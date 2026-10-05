@@ -10,6 +10,7 @@ from services.access import assert_site_access
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 from services.audit_service import log_action
+from services.notifications import notify, short, site_managers, site_name, team, who
 from services.safety_metrics import combine, compute_by_site
 from typing import List
 
@@ -155,6 +156,15 @@ def create_incident(
         resource_id=new_incident.id,
         details=f"Type: {new_incident.type}, Severity: {new_incident.severity}",
         ip_address=request.client.host
+    )
+    where = site_name(db, new_incident.site_id)
+    hurt = f" ({new_incident.injured_person} hurt)" if new_incident.injured_person else ""
+    notify(
+        db, team(db) + site_managers(db, new_incident.site_id),
+        kind="incident_recorded",
+        title=f"New {(new_incident.type or 'incident').replace('-', ' ')} at {where}{hurt}",
+        message=f"{who(current_user)} recorded a {new_incident.severity} incident: {short(new_incident.description)}",
+        link="/incidents", resource="incidents", resource_id=new_incident.id, actor=current_user,
     )
     return new_incident
 

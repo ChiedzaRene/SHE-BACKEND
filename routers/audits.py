@@ -7,6 +7,7 @@ from models.audit import Audit
 from models.user import User
 from schemas.audit import AuditCreate, AuditResponse, AuditUpdate
 from services.audit_service import log_action
+from services.notifications import notify, site_managers, site_name, team, who
 from services.access import assert_site_access
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
@@ -73,6 +74,14 @@ def create_audit(
         resource_id=new_audit.id,
         details=f"Created audit ID #{new_audit.id} for site #{new_audit.site_id}",
         ip_address=request.client.host,
+    )
+    notify(
+        db, team(db) + site_managers(db, new_audit.site_id),
+        kind="audit_recorded",
+        title=f"New audit at {site_name(db, new_audit.site_id)}: {new_audit.criteria}",
+        message=f"{who(current_user)} recorded a score of {new_audit.score:g}%"
+                + (f". Findings: {new_audit.findings}" if new_audit.findings else ""),
+        link="/audits", resource="audits", resource_id=new_audit.id, actor=current_user,
     )
     return new_audit
 

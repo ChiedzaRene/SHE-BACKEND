@@ -50,10 +50,15 @@ def _empty() -> dict:
         "lost_time_injuries": 0,
         "hours_worked": 0.0,
         "months_reported": 0,
+        # Injuries left out of the rates because their month has no hours entered yet,
+        # so the dashboard can say so instead of quietly showing N/A or 0.00
+        "uncounted_injuries": 0,
+        "months_missing_hours": [],
     }
 
 
 def _finish(stats: dict) -> dict:
+    stats["months_missing_hours"] = sorted(stats["months_missing_hours"])
     stats["hours_reported"] = stats["hours_worked"] > 0
     stats["trir"] = _rate(stats["recordable_incidents"], stats["hours_worked"])
     stats["ltifr"] = _rate(stats["lost_time_injuries"], stats["hours_worked"])
@@ -115,9 +120,16 @@ def compute_range(
     for site_id, ts, inc_type, lost_days in inc_q:
         stats = result.setdefault(site_id, _empty())
         stats["total_incidents"] += 1
-        if (site_id, month_start(ts.date() if hasattr(ts, "date") else ts)) not in reported:
+        is_injury = (inc_type or "").strip().lower() == "injury"
+        month = month_start(ts.date() if hasattr(ts, "date") else ts)
+        if (site_id, month) not in reported:
+            if is_injury:
+                stats["uncounted_injuries"] += 1
+                label = month.strftime("%Y-%m")
+                if label not in stats["months_missing_hours"]:
+                    stats["months_missing_hours"].append(label)
             continue
-        if (inc_type or "").strip().lower() == "injury":
+        if is_injury:
             stats["recordable_incidents"] += 1
             if lost_days and lost_days > 0:
                 stats["lost_time_injuries"] += 1
@@ -130,6 +142,10 @@ def combine(per_site: Iterable[dict]) -> dict:
     total = _empty()
     for s in per_site:
         total["total_incidents"] += s["total_incidents"]
+        total["uncounted_injuries"] += s.get("uncounted_injuries", 0)
+        for m in s.get("months_missing_hours", []):
+            if m not in total["months_missing_hours"]:
+                total["months_missing_hours"].append(m)
         if s["hours_worked"] > 0:
             for key in ("recordable_incidents", "lost_time_injuries", "hours_worked", "months_reported"):
                 total[key] += s[key]
