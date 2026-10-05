@@ -17,7 +17,8 @@ EXCLUDED_COLUMNS = {"users": {"password"}}
 
 TABLES = [
     'users', 'sites', 'incidents', 'corrective_actions',
-    'audits', 'legal', 'trainings', 'inspections'
+    'audits', 'legal', 'trainings', 'inspections',
+    'scorecards', 'scorecard_items', 'site_hours', 'app_settings', 'audit_logs',
 ]
 
 def backup():
