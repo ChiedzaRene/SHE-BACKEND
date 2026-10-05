@@ -9,12 +9,14 @@ from models.audit import Audit
 from models.incident import Incident
 from models.inspections import Inspection
 from models.legal import Legal
+from models.notification import Notification
 from models.scorecard import Scorecard
 from models.site_hours import SiteHours
 from models.training import Training
 from models.user import User
 from schemas.user import UserCreate, UserResponse, UserSelfUpdate, UserUpdate
 from services.audit_service import log_action
+from services.notifications import notify_account_update, snapshot
 from services.auth_services import get_current_user, hash_password, require_role
 from services.passwords import reset_by_admin
 
@@ -57,6 +59,16 @@ def update_me(
         ip_address=request.client.host if request.client else None,
     )
     return current_user
+
+
+# Names and emails of active staff, for choosing who a corrective action is assigned to
+@router.get("/directory")
+def staff_directory(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    people = db.query(User).filter(User.is_active.is_(True)).order_by(User.full_name, User.email).all()
+    return [{"name": p.full_name or "", "email": p.email} for p in people]
 
 
 # Get specific user by ID (admin only)
@@ -128,6 +140,7 @@ def update_user(
         user.role == "super_admin" or user_data.role == "super_admin"
     ):
         raise HTTPException(status_code=403, detail="Only a super admin can modify super admins")
+    before = snapshot(user)  # to tell the person what changed
 
     if user_data.email is not None:
         existing_user = (
@@ -174,6 +187,7 @@ def update_user(
             ),
             ip_address=request.client.host,
         )
+    notify_account_update(db, user, current_user, before, password_reset=was_reset)
     return user
 
 
@@ -229,6 +243,7 @@ def delete_user(
     try:
         # Settings only remember who last changed them; that link is optional, so just clear it
         db.query(AppSetting).filter(AppSetting.updated_by == user.id).update({AppSetting.updated_by: None})
+        db.query(Notification).filter(Notification.user_id == user.id).delete(synchronize_session=False)
         db.delete(user)
         db.commit()
     except IntegrityError:

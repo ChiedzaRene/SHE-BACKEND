@@ -8,6 +8,7 @@ from schemas.user import UserResponse, UserUpdate
 from services.auth_services import require_role
 from services.passwords import reset_by_admin
 from services.audit_service import log_action
+from services.notifications import notify_account_update, snapshot
 
 router = APIRouter(prefix="/admin/users", tags=["Super Admin User Management"])
 
@@ -34,6 +35,7 @@ def update_user_status_or_role(
         raise HTTPException(status_code=404, detail="User not found")
 
     update_data = user_update.model_dump(exclude_unset=True)
+    before = snapshot(user)  # to tell the person what changed
 
     # Prevent deactivating yourself
     if user.id == current_user.id and update_data.get("is_active") is False:
@@ -72,4 +74,5 @@ def update_user_status_or_role(
             ),
         )
 
+    notify_account_update(db, user, current_user, before, password_reset=was_reset)
     return user

@@ -13,11 +13,33 @@ from schemas.corrective_action import (
     CorrectiveActionUpdate,
 )
 from services.audit_service import log_action
+from services.notifications import find_person, notify, short, site_managers, site_name, team, who
 from services.access import assert_site_access
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 
 router = APIRouter(prefix="/corrective-actions", tags=["Corrective Actions"])
+
+
+def _notify_assignee(db: Session, action: CorrectiveAction, actor: User) -> None:
+    """Tell the person the action is assigned to (when the name matches an account), and the site's manager."""
+    where = site_name(db, action.site_id)
+    due = f" Due {action.due_date:%d %b %Y}." if action.due_date else ""
+    assignee = find_person(db, action.assigned_to)
+    if assignee:
+        notify(
+            db, [assignee], kind="action_assigned",
+            title=f"Corrective action assigned to you at {where}",
+            message=f"{who(actor)} assigned you: {short(action.action_taken)}.{due}",
+            link="/corrective-actions", resource="corrective_actions", resource_id=action.id, actor=actor,
+        )
+    managers = [m for m in site_managers(db, action.site_id) if not assignee or m.id != assignee.id]
+    notify(
+        db, managers, kind="action_created",
+        title=f"Corrective action at {where} assigned to {action.assigned_to}",
+        message=f"{short(action.action_taken)}.{due}",
+        link="/corrective-actions", resource="corrective_actions", resource_id=action.id, actor=actor,
+    )
 
 
 def _to_response(action: CorrectiveAction) -> dict:
@@ -120,6 +142,7 @@ def create_corrective_action(
         details=f"Created action item #{new_action.id} for incident #{new_action.incident_id}",
         ip_address=request.client.host,
     )
+    _notify_assignee(db, new_action, current_user)
     return _to_response(new_action)
 
 
@@ -154,6 +177,14 @@ def resolve_corrective_action(
         details=f"Resolved action #{action.id} (Success: {resolve_data.is_successful})",
         ip_address=request.client.host,
     )
+    outcome = "resolved" if action.status == "resolved" else "reviewed but not effective (still open)"
+    notify(
+        db, team(db) + site_managers(db, action.site_id) + [find_person(db, action.assigned_to)],
+        kind="action_resolved",
+        title=f"Corrective action {outcome} at {site_name(db, action.site_id)}",
+        message=f"{who(current_user)}: {short(action.action_taken)}",
+        link="/corrective-actions", resource="corrective_actions", resource_id=action.id, actor=current_user,
+    )
     return _to_response(action)
 
 
@@ -175,6 +206,7 @@ def update_corrective_action(
         updates["action_taken"] = updates.pop("description")
 
     allowed_fields = {"assigned_to", "action_taken", "status", "due_date", "date_resolved", "designation", "priority"}
+    previous_assignee = (action.assigned_to or "").strip().lower()
     for key, value in updates.items():
         if key in allowed_fields:
             setattr(action, key, value)
@@ -191,6 +223,8 @@ def update_corrective_action(
         details=f"Updated corrective action #{action.id}",
         ip_address=request.client.host,
     )
+    if "assigned_to" in updates and (action.assigned_to or "").strip().lower() != previous_assignee:
+        _notify_assignee(db, action, current_user)  # handed to someone new
     return _to_response(action)
 
 

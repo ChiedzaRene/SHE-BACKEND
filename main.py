@@ -23,6 +23,7 @@ from models.scorecard import Scorecard, ScorecardItem
 from models.site_hours import SiteHours
 from models.app_setting import AppSetting
 from models.audit_log import AuditLog
+from models.notification import Notification  # noqa: F401
 
 from routers import (
     auth, scorecard, sites, incidents, audits, 
@@ -30,6 +31,7 @@ from routers import (
 )
 from routers.inspections import router as inspections, uploads_router
 from routers.audit_log import router as audit_log_router
+from routers.notifications import router as notifications_router
 
 # Optional error monitoring: enabled only when SENTRY_DSN is set and sentry-sdk is installed
 if os.getenv("SENTRY_DSN"):
@@ -176,11 +178,12 @@ prepare_database()
 
 def _purge_audit_logs() -> None:
     from database import SessionLocal
-    from services.retention import purge_old_audit_logs
+    from services.retention import purge_old_audit_logs, purge_old_notifications
 
     db = SessionLocal()
     try:
         purge_old_audit_logs(db)
+        purge_old_notifications(db)
     except Exception:
         logging.getLogger("she_portal").exception("Audit log retention failed")
     finally:
@@ -216,6 +219,7 @@ app.include_router(super_admin.router)
 app.include_router(site_hours.router)
 app.include_router(reports.router)
 app.include_router(settings.router)
+app.include_router(notifications_router)
 
 @app.get("/")
 def root():
