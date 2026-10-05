@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +11,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from database import engine, Base
-from services.migrations import ensure_new_columns
+from services.migrations import ddl_transaction, ensure_new_columns
 from models.user import User
 from models.site import Site
 from models.incident import Incident
@@ -114,7 +115,7 @@ def ensure_inspections_file_url_column() -> None:
     if "file_url" in column_names:
         return
 
-    with engine.begin() as connection:
+    with ddl_transaction(engine) as connection:
         connection.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS file_url VARCHAR"))
 
 # Foreign-key columns used as filters on almost every list/metrics query.
@@ -134,17 +135,43 @@ INDEXES = [
 
 def ensure_indexes() -> None:
     inspector = inspect(engine)
-    with engine.begin() as connection:
+    with ddl_transaction(engine) as connection:
         for name, table, column in INDEXES:
             if inspector.has_table(table):
                 connection.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})"))
 
 
-# Create tables
-Base.metadata.create_all(bind=engine)
-ensure_inspections_file_url_column()
-ensure_new_columns(engine)
-ensure_indexes()
+def prepare_database(attempts: int = 5, wait_seconds: int = 10) -> None:
+    """Create missing tables, columns and indexes, retrying while the database wakes up.
+
+    Each step is logged so a stuck or failed start-up says where it stopped.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            logger.info("Preparing the database (attempt %s of %s)...", attempt, attempts)
+            with ddl_transaction(engine) as connection:
+                Base.metadata.create_all(bind=connection)
+            logger.info("Tables checked")
+            ensure_inspections_file_url_column()
+            added = ensure_new_columns(engine)
+            if added:
+                logger.info("Added columns: %s", ", ".join(added))
+            ensure_indexes()
+            logger.info("Database ready")
+            return
+        except Exception as exc:  # noqa: BLE001 - reported below with a plain explanation
+            first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else repr(exc)
+            if "lock timeout" in first_line:
+                hint = "The database is busy (the previous version of the server may still be using it); trying again."
+            else:
+                hint = "Check that the Supabase project is running (not paused) and that DATABASE_URL is correct."
+            logger.error("Could not prepare the database: %s. %s", first_line, hint)
+            if attempt == attempts:
+                raise
+            time.sleep(wait_seconds)
+
+
+prepare_database()
 
 
 def _purge_audit_logs() -> None:
