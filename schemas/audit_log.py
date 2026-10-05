@@ -1,12 +1,18 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
+import html
+
 import bleach
 
 def sanitize_text(value: Optional[str]) -> Optional[str]:
-    """Strips all HTML/script tags from incoming or outgoing string data."""
+    """Strips all HTML/script tags from outgoing text.
+
+    bleach also turns & < > into &amp; &lt; &gt;. The page already escapes text when it shows it, so
+    leaving those codes in would display "-&gt;" instead of "->"; turn them back into plain characters.
+    """
     if isinstance(value, str):
-        return bleach.clean(value, tags=[], strip=True).strip()
+        return html.unescape(bleach.clean(value, tags=[], strip=True)).strip()
     return value
 
 

@@ -1,4 +1,5 @@
 from typing import Optional
+import html
 import bleach
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -6,7 +7,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 def sanitize_text(value: Optional[str]) -> Optional[str]:
     """Strips all HTML/script tags from user-provided string inputs."""
     if isinstance(value, str):
-        return bleach.clean(value, tags=[], strip=True).strip()
+        return html.unescape(bleach.clean(value, tags=[], strip=True)).strip()
     return value
 
 
@@ -45,6 +46,21 @@ class UserUpdate(BaseModel):
         return sanitize_text(value)
 
 
+class UserSelfUpdate(BaseModel):
+    """What a user may change about themselves. Email and role are deliberately not here."""
+    full_name: str = Field(..., min_length=1, max_length=150)
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def clean_name(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_text(value)
+
+
+class ChangePassword(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)
@@ -57,6 +73,7 @@ class UserResponse(BaseModel):
     role: str
     site_id: Optional[int] = None
     is_active: bool = True
+    must_change_password: bool = False
 
     class Config:
         from_attributes = True

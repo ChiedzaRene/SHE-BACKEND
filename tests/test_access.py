@@ -54,5 +54,18 @@ def test_inspection_upload_rules(client, auth):
 
 
 def test_super_admin_can_change_password(client, auth):
-    r = client.patch("/admin/users/2", json={"password": "newpassword123"}, headers=auth["super"])
+    # A throwaway user: resetting a password signs that user out, which would break the shared admin token
+    from database import SessionLocal
+    from models.user import User
+    from services.auth_services import hash_password
+    db = SessionLocal()
+    db.add(User(email="pw-throwaway@x.com", password=hash_password("old-password-1"), role="she_team"))
+    db.commit()
+    uid = db.query(User).filter(User.email == "pw-throwaway@x.com").one().id
+    db.close()
+    r = client.patch(f"/admin/users/{uid}", json={"password": "newpassword123"}, headers=auth["super"])
     assert r.status_code == 200
+    db = SessionLocal()
+    db.query(User).filter(User.id == uid).delete()
+    db.commit()
+    db.close()

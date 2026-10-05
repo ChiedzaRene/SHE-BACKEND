@@ -10,6 +10,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from database import engine, Base
+from services.migrations import ensure_new_columns
 from models.user import User
 from models.site import Site
 from models.incident import Incident
@@ -19,11 +20,12 @@ from models.legal import Legal
 from models.training import Training
 from models.scorecard import Scorecard, ScorecardItem
 from models.site_hours import SiteHours
+from models.app_setting import AppSetting
 from models.audit_log import AuditLog
 
 from routers import (
     auth, scorecard, sites, incidents, audits, 
-    legal, trainings, users, corrective_actions, super_admin, site_hours, reports
+    legal, trainings, users, corrective_actions, super_admin, site_hours, reports, settings
 )
 from routers.inspections import router as inspections, uploads_router
 from routers.audit_log import router as audit_log_router
@@ -141,7 +143,34 @@ def ensure_indexes() -> None:
 # Create tables
 Base.metadata.create_all(bind=engine)
 ensure_inspections_file_url_column()
+ensure_new_columns(engine)
 ensure_indexes()
+
+
+def _purge_audit_logs() -> None:
+    from database import SessionLocal
+    from services.retention import purge_old_audit_logs
+
+    db = SessionLocal()
+    try:
+        purge_old_audit_logs(db)
+    except Exception:
+        logging.getLogger("she_portal").exception("Audit log retention failed")
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+async def _daily_housekeeping():
+    import asyncio
+
+    async def loop():
+        while True:
+            await asyncio.to_thread(_purge_audit_logs)
+            await asyncio.sleep(24 * 3600)
+
+    app.state.housekeeping = asyncio.create_task(loop())
+
 
 # Register Routers
 app.include_router(auth.router)
@@ -159,6 +188,7 @@ app.include_router(audit_log_router)
 app.include_router(super_admin.router)
 app.include_router(site_hours.router)
 app.include_router(reports.router)
+app.include_router(settings.router)
 
 @app.get("/")
 def root():

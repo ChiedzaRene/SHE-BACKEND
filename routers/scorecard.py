@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -11,6 +11,7 @@ from models.site import Site
 from models.user import User
 from schemas.scorecard import ScorecardCreate, ScorecardOut
 from services.access import assert_site_access
+from services.audit_service import log_action
 from services.auth_services import get_current_user, require_role
 
 router = APIRouter(prefix="/scorecard", tags=["Scorecard"])
@@ -186,6 +187,7 @@ def get_scorecard(
 
 @router.post("/", response_model=ScorecardOut, status_code=201)
 def create_scorecard(
+    request: Request,
     payload: ScorecardCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -218,6 +220,9 @@ def create_scorecard(
         db.add(ScorecardItem(scorecard_id=sc.id, **item_data.model_dump()))
 
     db.commit()
+    log_action(db=db, user=current_user, action="CREATE_SCORECARD", resource="scorecards", resource_id=sc.id,
+               details=f"Scorecard for site #{payload.site_id}: {overall_percent}% over {len(payload.items)} requirements",
+               ip_address=request.client.host if request.client else None)
     return _to_out(_base_query(db).filter(Scorecard.id == sc.id).one())
 
 
@@ -227,6 +232,7 @@ def create_scorecard(
 
 @router.delete("/{scorecard_id}", status_code=204)
 def delete_scorecard(
+    request: Request,
     scorecard_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("admin", "super_admin")),
@@ -236,3 +242,6 @@ def delete_scorecard(
         raise HTTPException(status_code=404, detail="Scorecard not found")
     db.delete(sc)
     db.commit()
+    log_action(db=db, user=current_user, action="DELETE_SCORECARD", resource="scorecards", resource_id=scorecard_id,
+               details=f"Deleted scorecard #{scorecard_id}",
+               ip_address=request.client.host if request.client else None)

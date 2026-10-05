@@ -4,7 +4,7 @@ import uuid
 from datetime import date as date_type
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, File, Form, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, File, Form, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from models.inspections import Inspection
 from models.user import User
 from schemas.inspections import InspectionResponse, InspectionUpdate
 from services.access import assert_site_access
+from services.audit_service import log_action
 from services.pagination import Pagination
 from services.auth_services import get_current_user
 
@@ -71,6 +72,7 @@ def get_inspection(
 
 @router.post("/", response_model=InspectionResponse)
 async def create_inspection(
+    request: Request,
     site_id: int = Form(...),
     inspector_name: str = Form(""),
     inspection_date: date_type = Form(...),
@@ -132,11 +134,16 @@ async def create_inspection(
     db.add(inspection)
     db.commit()
     db.refresh(inspection)
+    log_action(db=db, user=current_user, action="CREATE_INSPECTION", resource="inspections",
+               resource_id=inspection.id,
+               details=f"Inspection at site #{site_id}, overall score {overall}%" + (" (file attached)" if file_url else ""),
+               ip_address=request.client.host if request.client else None)
     return inspection
 
 
 @router.put("/{inspection_id}", response_model=InspectionResponse)
 def update_inspection(
+    request: Request,
     inspection_id: int,
     data: InspectionUpdate,
     db: Session = Depends(get_db),
@@ -158,11 +165,15 @@ def update_inspection(
 
     db.commit()
     db.refresh(inspection)
+    log_action(db=db, user=current_user, action="UPDATE_INSPECTION", resource="inspections",
+               resource_id=inspection.id, details=f"Updated inspection #{inspection.id}",
+               ip_address=request.client.host if request.client else None)
     return inspection
 
 
 @router.delete("/{inspection_id}")
 def delete_inspection(
+    request: Request,
     inspection_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -174,6 +185,9 @@ def delete_inspection(
         raise HTTPException(status_code=404, detail="Inspection not found")
     db.delete(inspection)
     db.commit()
+    log_action(db=db, user=current_user, action="DELETE_INSPECTION", resource="inspections",
+               resource_id=inspection_id, details=f"Deleted inspection #{inspection_id}",
+               ip_address=request.client.host if request.client else None)
     return {"message": "Inspection deleted successfully"}
 
 _STORED_NAME = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|jpeg|png|pdf)$", re.IGNORECASE)

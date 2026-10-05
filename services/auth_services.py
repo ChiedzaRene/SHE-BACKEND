@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from models.user import User
@@ -44,6 +44,26 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def issue_token(user: User) -> str:
+    """The login token for a user, reflecting their state right now.
+
+    tv  - the user's token_version; a later password change/reset makes this token invalid
+    mcp - the account must change its password first (lets the frontend route them there)
+    """
+    return create_access_token(data={
+        "sub": user.email,
+        "role": user.role,
+        "user_id": user.id,
+        "site_id": user.site_id,
+        "tv": user.token_version or 0,
+        "mcp": bool(user.must_change_password),
+    })
+
+
+# While a password change is required, only these are allowed (so the user can actually do it)
+ALLOWED_WHEN_PASSWORD_CHANGE_REQUIRED = {"/users/me", "/auth/change-password"}
+
+
 def get_user_by_email(db: Session, email: str):
     return db.query(User).filter(User.email == email).first()
 
@@ -58,6 +78,7 @@ def authenticate_user(db: Session, email: str, password: str):
 
 
 def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ):
@@ -81,6 +102,15 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user account"
+        )
+    # Tokens from before a password change/reset are dead. Tokens issued before this feature
+    # existed carry no "tv" and count as version 0, so deploying it does not sign anyone out.
+    if payload.get("tv", 0) != (user.token_version or 0):
+        raise credentials_exception
+    if user.must_change_password and request.url.path not in ALLOWED_WHEN_PASSWORD_CHANGE_REQUIRED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "password_change_required", "message": "You must choose a new password before continuing."},
         )
     return user
 

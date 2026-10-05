@@ -5,12 +5,17 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from database import get_db
 from models.user import User
-from schemas.user import UserCreate, UserResponse, Token
+from schemas.user import ChangePassword, UserCreate, UserResponse, Token
+from services.audit_service import log_action, log_event
+from services.login_throttle import record_failure, record_success, seconds_until_allowed
+from services.passwords import set_new_password
 from services.auth_services import (
+    get_current_user,
+    verify_password,
     require_role,
     hash_password,
     authenticate_user,
-    create_access_token,
+    issue_token,
     get_user_by_email
 )
 
@@ -47,26 +52,57 @@ def register(
         password=hash_password(user_data.password),
         full_name=user_data.full_name,
         role=user_data.role,
-        site_id=user_data.site_id
+        site_id=user_data.site_id,
+        must_change_password=True,  # an admin chose this password, so the user picks their own at first sign-in
     )
 
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    log_action(
+        db=db,
+        user=current_user,
+        action="CREATE_USER",
+        resource="users",
+        resource_id=new_user.id,
+        details=f"Created user: {new_user.email} (Role: {new_user.role})",
+        ip_address=request.client.host if request.client else None,
+    )
     return new_user
 
 
 @router.post("/login", response_model=Token)
-@limiter.limit("5/minute")  # max 5 login attempts per minute per IP
+@limiter.limit("60/minute")  # per-IP ceiling only; per-account guessing is limited by login_throttle
 def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+    ip = request.client.host if request.client else None
+    wait = seconds_until_allowed(form_data.username)
+    if wait:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed attempts for this account. Please wait {-(-wait // 60)} minute(s) and try again.",
+            headers={"Retry-After": str(wait)},
+        )
+
     # OAuth2PasswordRequestForm uses "username" field — we treat it as email
     user = authenticate_user(db, form_data.username, form_data.password)
 
     if not user:
+        record_failure(form_data.username)
+        # Recorded so an admin can see someone guessing a password. The typed password is never stored.
+        known = get_user_by_email(db, form_data.username)
+        log_event(
+            db,
+            email=form_data.username,
+            role=known.role if known else "unknown",
+            action="LOGIN_FAILED",
+            resource="auth",
+            details="Wrong password" if known else "No account with this email",
+            ip_address=ip,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -74,16 +110,42 @@ def login(
         )
 
     if not user.is_active:
+        log_action(db=db, user=user, action="LOGIN_FAILED", resource="auth",
+                   details="Account is deactivated", ip_address=ip)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled. Contact your administrator."
         )
 
-    access_token = create_access_token(data={
-        "sub": user.email,
-        "role": user.role,
-        "user_id": user.id,
-        "site_id": user.site_id
-    })
+    record_success(form_data.username)
+    log_action(db=db, user=user, action="LOGIN", resource="auth", details="Signed in", ip_address=ip)
+    return {"access_token": issue_token(user), "token_type": "bearer"}
 
-    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/change-password")
+@limiter.limit("5/minute")  # guessing the current password is the only thing this endpoint can be abused for
+def change_password(
+    request: Request,
+    payload: ChangePassword,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 400, not 401: the frontend signs the user out on any 401
+    if not verify_password(payload.current_password, current_user.password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status_code=400, detail="New password must be different from the current one")
+
+    # Every other session is signed out; the caller gets a fresh token below so this one continues
+    set_new_password(current_user, payload.new_password, force_change=False, revoke_sessions=True)
+    db.commit()
+    log_action(
+        db=db,
+        user=current_user,
+        action="CHANGE_PASSWORD",
+        resource="users",
+        resource_id=current_user.id,
+        details="User changed their own password; all other sessions were signed out",
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"message": "Password changed", "access_token": issue_token(current_user), "token_type": "bearer"}

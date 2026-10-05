@@ -56,6 +56,42 @@ All three come from one builder (`services/reports.py`), so they always agree.
 * CSV cells that start with `=`, `+`, `-` or `@` are neutralised so Excel cannot run them as formulas.
 * CSV and PDF downloads are recorded in the audit log (`EXPORT_REPORT`); on-screen views are not.
 
+## Settings
+
+* `POST /auth/change-password` and `PATCH /users/me` let any user change their own password and name
+  (wrong current password returns 400, never 401, so the frontend does not sign the user out).
+* `GET/PUT /settings/safety-targets`: the TRIR/LTIFR warning limits (default 1.5 / 0.5 per 200,000 hours).
+  Everyone can read them; admins can change them, and every change is audited. Reports use them too.
+* `GET /audit-logs/` (super admin only): newest first, filter by `email` (exactly one person), `user` (part of
+  an email), `action`, `resource`, `start`, `end`; page with `limit`/`offset`; total in `X-Total-Count`.
+* `GET /audit-logs/person?email=`: one person's trail at a glance (total, first/last activity, last sign-in,
+  failed sign-ins, what they did). `GET /audit-logs/facets`: the actions, sections and **every person**
+  (accounts, plus removed accounts that still have history) with plain-English names
+  (`services/audit_labels.py`; a test fails if a new action is added without a label).
+* **What is recorded:** every change to incidents, corrective actions, audits, inspections, legal records and
+  scorecards, trainings, sites, hours, users and settings, plus **sign-ins and failed sign-ins** (the typed
+  password is never stored). Report downloads are recorded too.
+
+## Deleting users
+
+Admins can delete users (not super admins; only a super admin can). A user who has recorded incidents,
+audits, inspections, legal or training records, scorecards or hours can't be deleted: the API answers `409`
+with what they recorded and suggests deactivating the account (`is_active: false`), which blocks sign-in but
+keeps their records attributed.
+
+## Password security
+
+* **Sign out everywhere:** each user has a `token_version`, bumped whenever their password changes or is
+  reset. Tokens carry the version they were issued with, so older sessions stop working. When you change
+  your *own* password the response includes a fresh token so that session continues.
+* **Forced change:** accounts an admin creates, and accounts whose password an admin resets, are flagged
+  `must_change_password`. Until the user picks their own password the API answers `403` with code
+  `password_change_required` for everything except `GET/PATCH /users/me` and `POST /auth/change-password`.
+  An admin setting their *own* password through the Users page is a normal change (nothing forced).
+* **Audit:** admin resets are logged as `RESET_PASSWORD` (never the password).
+* The two new columns are added to existing databases automatically at startup (`services/migrations.py`);
+  tokens issued before this feature keep working until their normal expiry.
+
 ## API notes
 
 * List endpoints accept optional `?limit=&offset=`; with a limit the total is returned in the
@@ -74,3 +110,9 @@ ruff check . --select E9,F63,F7,F82
 
 GitHub Actions runs both on every pull request. `backup.py` writes a JSON backup of the main
 tables (password hashes are excluded and the file is created owner-only).
+
+## Housekeeping
+
+- **Audit log retention:** entries older than `AUDIT_RETENTION_DAYS` (default 730, about two years) are deleted when the server starts and then once a day.
+- **Garbled text (`&amp;`):** older records saved before the sanitiser fix may show `&amp;`, `&lt;` or `&gt;`. Preview with `python fix_escaped_text.py`, then repair with `python fix_escaped_text.py --apply` (run `python backup.py` first).
+- **Sign-in limits:** 8 wrong passwords per account in 5 minutes locks that account briefly; there is also a generous per-IP ceiling (60 sign-ins a minute).
