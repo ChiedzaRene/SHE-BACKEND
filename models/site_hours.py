@@ -14,5 +14,7 @@ class SiteHours(Base):
     site_id = Column(Integer, ForeignKey("sites.id"), nullable=False, index=True)
     period = Column(Date, nullable=False)  # always the first day of the month
     hours_worked = Column(Float, nullable=False)
+    # Headcount at the site that month (entered with the hours by the site's manager)
+    workers = Column(Integer, nullable=True)
     entered_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

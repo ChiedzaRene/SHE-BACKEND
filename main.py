@@ -32,6 +32,7 @@ from routers import (
 from routers.inspections import router as inspections, uploads_router
 from routers.audit_log import router as audit_log_router
 from routers.notifications import router as notifications_router
+from routers.dashboard import router as dashboard_router
 
 # Optional error monitoring: enabled only when SENTRY_DSN is set and sentry-sdk is installed
 if os.getenv("SENTRY_DSN"):
@@ -220,6 +221,7 @@ app.include_router(site_hours.router)
 app.include_router(reports.router)
 app.include_router(settings.router)
 app.include_router(notifications_router)
+app.include_router(dashboard_router)
 
 @app.get("/")
 def root():

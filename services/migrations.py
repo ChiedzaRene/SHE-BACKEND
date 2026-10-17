@@ -31,6 +31,9 @@ NEW_COLUMNS = {
     "incidents": [
         ("injured_person", "VARCHAR(150)"),
     ],
+    "site_hours": [
+        ("workers", "INTEGER"),
+    ],
 }
 
 
