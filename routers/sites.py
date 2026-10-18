@@ -9,6 +9,7 @@ from models.corrective_action import CorrectiveAction
 from models.incident import Incident
 from models.inspections import Inspection
 from models.legal import Legal
+from models.safety_talk import SafetyTalk
 from models.scorecard import Scorecard
 from models.site_hours import SiteHours
 from models.training import Training
@@ -17,6 +18,7 @@ from schemas.site import SiteCreate, SiteOut
 from services.audit_service import log_action
 from services.access import assert_site_access
 from services.auth_services import get_current_user, require_role
+from services.clock import local_today
 
 router = APIRouter(prefix="/sites", tags=["Sites"])
 
@@ -57,7 +59,8 @@ def create_site(
     if existing:
         raise HTTPException(status_code=400, detail="Site with this name already exists")
 
-    site = Site(**payload.model_dump())
+    # weekly toolbox talks are due from the site's first Monday
+    site = Site(**payload.model_dump(), talks_from=local_today())
     db.add(site)
     db.commit()
     db.refresh(site)
@@ -125,6 +128,7 @@ def delete_site(
         "corrective actions": CorrectiveAction,
         "scorecards": Scorecard,
         "hours entries": SiteHours,
+        "toolbox talks": SafetyTalk,
         "users": User,
     }
     in_use = [

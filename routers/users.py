@@ -10,6 +10,7 @@ from models.incident import Incident
 from models.inspections import Inspection
 from models.legal import Legal
 from models.notification import Notification
+from models.safety_talk import SafetyTalk
 from models.scorecard import Scorecard
 from models.she_file import SheFile
 from models.site_hours import SiteHours
@@ -203,6 +204,7 @@ RECORDS_BY_USER = [
     ("scorecard", "scorecards", Scorecard.submitted_by),
     ("hours entry", "hours entries", SiteHours.entered_by),
     ("shared SHE file", "shared SHE files", SheFile.uploaded_by),
+    ("toolbox talk", "toolbox talks", SafetyTalk.submitted_by),
 ]
 
 

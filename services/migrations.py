@@ -22,7 +22,8 @@ def ddl_transaction(engine):
             connection.execute(text("SET LOCAL statement_timeout = '120s'"))
         yield connection
 
-# table -> [(column, SQL type and default)]. Literals work on both PostgreSQL and SQLite.
+# table -> [(column, SQL type and default)]. Literals work on both PostgreSQL and SQLite;
+# a type spelled differently per database is a dict keyed by dialect name, with a "default".
 NEW_COLUMNS = {
     "users": [
         ("must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -33,6 +34,16 @@ NEW_COLUMNS = {
     ],
     "site_hours": [
         ("workers", "INTEGER"),
+    ],
+    "sites": [
+        ("region", "VARCHAR(100)"),
+        ("talks_from", "DATE"),
+    ],
+    "trainings": [
+        ("document_name", "VARCHAR(255)"),
+        ("document_type", "VARCHAR(120)"),
+        ("document_size", "INTEGER"),
+        ("document", {"postgresql": "BYTEA", "default": "BLOB"}),
     ],
 }
 
@@ -47,6 +58,8 @@ def ensure_new_columns(engine) -> list:
         existing = {c["name"] for c in inspector.get_columns(table)}
         with ddl_transaction(engine) as connection:
             for name, ddl in columns:
+                if isinstance(ddl, dict):  # a type that is spelled differently per database
+                    ddl = ddl.get(engine.dialect.name, ddl["default"])
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                     added.append(f"{table}.{name}")

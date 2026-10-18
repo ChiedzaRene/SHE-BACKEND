@@ -32,14 +32,17 @@ class SiteCreate(BaseModel):
         pattern=r"^\+?[0-9\s\-\(\)]+$",
         description="Valid phone number characters: digits, spaces, +, -, ()",
     )
+    region: Optional[str] = Field(default=None, max_length=100)
 
-    @field_validator("name", "address", "contact_number", mode="before")
+    @field_validator("name", "address", "contact_number", "region", mode="before")
     @classmethod
     def clean_text_inputs(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
         value = sanitize_text(value)
         # The contact number is optional: a blank box means "no number", not an invalid one
-        if info.field_name == "contact_number" and value == "":
+        if info.field_name in ("contact_number", "region") and value == "":
             return None
+        if info.field_name == "region" and value:
+            value = " ".join(value.split())
         return value
 
 
@@ -53,14 +56,17 @@ class SiteUpdate(BaseModel):
         max_length=30,
         pattern=r"^\+?[0-9\s\-\(\)]+$",
     )
+    region: Optional[str] = Field(default=None, max_length=100)
 
-    @field_validator("name", "address", "contact_number", mode="before")
+    @field_validator("name", "address", "contact_number", "region", mode="before")
     @classmethod
     def clean_text_inputs(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
         value = sanitize_text(value)
         # The contact number is optional: a blank box means "no number", not an invalid one
-        if info.field_name == "contact_number" and value == "":
+        if info.field_name in ("contact_number", "region") and value == "":
             return None
+        if info.field_name == "region" and value:
+            value = " ".join(value.split())
         return value
 
 
@@ -71,6 +77,7 @@ class SiteResponse(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     contact_number: Optional[str] = None
+    region: Optional[str] = None
 
     class Config:
         from_attributes = True

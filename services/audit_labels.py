@@ -36,6 +36,7 @@ ACTION_LABELS = {
     "UPLOAD_SHE_FILE": "SHE file shared",
     "DOWNLOAD_SHE_FILE": "SHE file downloaded",
     "DELETE_SHE_FILE": "SHE file deleted",
+    "SUBMIT_SAFETY_TALK": "Toolbox talk submitted",
 }
 
 RESOURCE_LABELS = {
@@ -54,6 +55,7 @@ RESOURCE_LABELS = {
     "auth": "Sign-in",
     "audit_logs": "Audit log",
     "she_files": "SHE files",
+    "safety_talks": "Toolbox talks",
 }
 
 

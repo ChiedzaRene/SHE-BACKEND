@@ -16,12 +16,15 @@ from models.site import Site
 from models.site_hours import SiteHours
 from models.user import User
 from services.safety_metrics import compute_range
+from services.safety_talks import combined_rate, weeks_status
 
 PERIODS = {
     "month": "This month",
     "last_month": "Last month",
     "quarter": "This quarter",
     "last_quarter": "Last quarter",
+    "3m": "Last 3 months",
+    "6m": "Last 6 months",
     "ytd": "Year to date",
     "12m": "Last 12 months",
 }
@@ -48,6 +51,9 @@ def period_range(key: str, today: Optional[date] = None):
         start, months = quarter_start, 3
     elif key == "last_quarter":
         start, months = _add_months(quarter_start, -3), 3
+    elif key in ("3m", "6m"):
+        months = 3 if key == "3m" else 6
+        start = _add_months(this_month, 1 - months)
     elif key == "ytd":
         start, months = date(today.year, 1, 1), today.month
     else:  # 12m
@@ -136,6 +142,7 @@ def summarise(db: Session, site_ids: List[int], start: date, end: date, today: O
     for m in db.query(User).filter(User.role == "site_manager", User.site_id.in_(site_ids), User.is_active.is_(True)):
         managers[m.site_id].append(m.full_name or m.email)
 
+    talks = weeks_status(db, sites.values(), start, end, today)
     rows = []
     for sid in site_ids:
         r, a, site = rates.get(sid, {}), actions.get(sid), sites.get(sid)
@@ -160,12 +167,17 @@ def summarise(db: Session, site_ids: List[int], start: date, end: date, today: O
             "actions_completed": a["completed"] if a else 0,
             "actions_completion_pct": round(100 * a["completed"] / a["total"], 1) if a and a["total"] else None,
             "avg_days_to_close": round(sum(a["days"]) / len(a["days"]), 1) if a and a["days"] else None,
+            "region": site.region,
+            "talks_due": talks[sid]["due"],
+            "talks_done": talks[sid]["done"],
+            "talks_rate": talks[sid]["rate"],
         })
 
     all_days = [d for a in actions.values() for d in a["days"]]
     total_actions = sum(a["total"] for a in actions.values())
     done_actions = sum(a["completed"] for a in actions.values())
     reported = [r for r in rows if r["hours_worked"] > 0]
+    talk_totals = combined_rate({"due": r["talks_due"], "done": r["talks_done"]} for r in rows)
     return {
         "start": start.isoformat(),
         "end": _add_months(end, -1).isoformat(),   # first day of the last month included
@@ -188,6 +200,10 @@ def summarise(db: Session, site_ids: List[int], start: date, end: date, today: O
             "actions_completed": done_actions,
             "actions_completion_pct": round(100 * done_actions / total_actions, 1) if total_actions else None,
             "avg_days_to_close": round(sum(all_days) / len(all_days), 1) if all_days else None,
+            # weekly toolbox talks: submitted / weeks due, across the sites shown
+            "talks_due": talk_totals["due"],
+            "talks_done": talk_totals["done"],
+            "talks_rate": talk_totals["rate"],
         },
         "by_type": [{"name": k, "value": v} for k, v in sorted(by_type.items(), key=lambda kv: -kv[1])],
         "by_month": [{"month": k, **dict(v)} for k, v in by_month.items()],

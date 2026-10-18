@@ -4,10 +4,8 @@ The uploader chooses who the file is for (site managers, the SHE team, admins; s
 every site or of one site) and whether it is view only. A view-only file can be opened in the app
 but its download link is refused for everyone except the person who uploaded it.
 """
-import os
 from datetime import datetime
 from typing import List, Optional
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
@@ -19,34 +17,13 @@ from models.site import Site
 from models.user import User
 from services.audit_service import log_action
 from services.auth_services import get_current_user, require_role
+from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.notifications import notify, short, site_name, who
 
 router = APIRouter(prefix="/she-files", tags=["SHE files"])
 
-MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB: files are kept in the database
-
 AUDIENCES = ("site_manager", "she_team", "admin")
 UPLOADER_ROLES = ("admin", "super_admin", "she_team")
-
-# Allow-list, with the type we serve each one as (never the type the browser claimed: an .html or .svg
-# file served from our origin could run script). `True` = can be shown in the app, so it can be view only.
-FILE_TYPES = {
-    ".pdf": ("application/pdf", True),
-    ".png": ("image/png", True),
-    ".jpg": ("image/jpeg", True),
-    ".jpeg": ("image/jpeg", True),
-    ".gif": ("image/gif", True),
-    ".webp": ("image/webp", True),
-    ".txt": ("text/plain; charset=utf-8", False),
-    ".csv": ("text/csv; charset=utf-8", False),
-    ".doc": ("application/msword", False),
-    ".docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", False),
-    ".xls": ("application/vnd.ms-excel", False),
-    ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", False),
-    ".ppt": ("application/vnd.ms-powerpoint", False),
-    ".pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", False),
-}
-ALLOWED_LIST = "PDF, images (PNG, JPG, GIF, WebP), Word, Excel, PowerPoint, CSV and text files"
 
 
 class SheFileOut(BaseModel):
@@ -88,8 +65,7 @@ def _can_see(user: User, f: SheFile) -> bool:
 
 
 def _viewable(f: SheFile) -> bool:
-    ext = os.path.splitext(f.filename)[1].lower()
-    return FILE_TYPES.get(ext, ("", False))[1]
+    return is_viewable(f.filename)
 
 
 def _can_download(user: User, f: SheFile) -> bool:
@@ -117,23 +93,8 @@ def _get_visible(db: Session, user: User, file_id: int, with_data: bool = False)
     return f
 
 
-def _disposition(kind: str, filename: str) -> str:
-    ascii_name = filename.encode("ascii", "ignore").decode().replace('"', "").replace("\\", "") or "file"
-    return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-
-
 def _file_response(f: SheFile, kind: str) -> Response:
-    return Response(
-        content=f.data,
-        media_type=f.content_type,
-        headers={
-            "Content-Disposition": _disposition(kind, f.filename),
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-            # if the file is ever opened directly, nothing in it may run
-            "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
-        },
-    )
+    return file_response(f.data, f.content_type, f.filename, kind)
 
 
 @router.get("/", response_model=List[SheFileOut])
@@ -170,25 +131,17 @@ async def upload_file(
         elif not db.query(Site.id).filter(Site.id == site_id).first():
             raise HTTPException(status_code=404, detail="Site not found")
 
-    filename = os.path.basename((file.filename or "").replace("\\", "/")).strip()
-    ext = os.path.splitext(filename)[1].lower()
-    if not filename or ext not in FILE_TYPES:
-        raise HTTPException(status_code=400, detail=f"That type of file can't be shared. Allowed: {ALLOWED_LIST}.")
-    content_type, viewable = FILE_TYPES[ext]
-    if view_only and not viewable:
+    filename, content_type = clean_filename(file)
+    if view_only and not is_viewable(filename):
         raise HTTPException(
             status_code=400,
             detail="Only PDF files and images can be view only, because they open inside the app. "
                    "Save the document as a PDF first, or allow downloading.",
         )
-    data = await file.read(MAX_FILE_BYTES + 1)
-    if len(data) > MAX_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="The file is too large (the limit is 10 MB).")
-    if not data:
-        raise HTTPException(status_code=400, detail="The file is empty.")
+    data = await read_upload(file)
 
     f = SheFile(
-        title=title, description=(description or "").strip() or None, filename=filename[:255],
+        title=title, description=(description or "").strip() or None, filename=filename,
         content_type=content_type, size=len(data), data=data, view_only=view_only,
         audience=",".join(roles), site_id=site_id, uploaded_by=current_user.id,
     )
