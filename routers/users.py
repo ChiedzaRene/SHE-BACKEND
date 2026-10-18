@@ -11,6 +11,7 @@ from models.inspections import Inspection
 from models.legal import Legal
 from models.notification import Notification
 from models.scorecard import Scorecard
+from models.she_file import SheFile
 from models.site_hours import SiteHours
 from models.training import Training
 from models.user import User
@@ -201,6 +202,7 @@ RECORDS_BY_USER = [
     ("training record", "training records", Training.user_id),
     ("scorecard", "scorecards", Scorecard.submitted_by),
     ("hours entry", "hours entries", SiteHours.entered_by),
+    ("shared SHE file", "shared SHE files", SheFile.uploaded_by),
 ]
 
 

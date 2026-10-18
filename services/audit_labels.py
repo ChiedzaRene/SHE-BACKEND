@@ -33,6 +33,9 @@ ACTION_LABELS = {
     "UPDATE_PROFILE": "Name changed by the user",
     "UPDATE_SETTINGS": "Settings changed",
     "EXPORT_REPORT": "Report downloaded",
+    "UPLOAD_SHE_FILE": "SHE file shared",
+    "DOWNLOAD_SHE_FILE": "SHE file downloaded",
+    "DELETE_SHE_FILE": "SHE file deleted",
 }
 
 RESOURCE_LABELS = {
@@ -50,6 +53,7 @@ RESOURCE_LABELS = {
     "scorecards": "Legal scorecards",
     "auth": "Sign-in",
     "audit_logs": "Audit log",
+    "she_files": "SHE files",
 }
 
 
