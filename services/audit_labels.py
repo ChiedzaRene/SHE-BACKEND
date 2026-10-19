@@ -37,6 +37,12 @@ ACTION_LABELS = {
     "DOWNLOAD_SHE_FILE": "SHE file downloaded",
     "DELETE_SHE_FILE": "SHE file deleted",
     "SUBMIT_SAFETY_TALK": "Toolbox talk submitted",
+    "CREATE_SITE_INSPECTION": "Inspection report started",
+    "DELETE_SITE_INSPECTION": "Draft inspection report deleted",
+    "SUBMIT_SITE_INSPECTION": "Inspection report submitted",
+    "ACKNOWLEDGE_NC": "NC acknowledged and assigned",
+    "COMPLETE_NC": "NC corrective action completed",
+    "REVIEW_NC": "NC reviewed",
 }
 
 RESOURCE_LABELS = {
@@ -56,6 +62,7 @@ RESOURCE_LABELS = {
     "audit_logs": "Audit log",
     "she_files": "SHE files",
     "safety_talks": "Toolbox talks",
+    "site_inspections": "Inspections",
 }
 
 

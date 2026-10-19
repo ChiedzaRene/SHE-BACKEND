@@ -33,14 +33,18 @@ class SiteCreate(BaseModel):
         description="Valid phone number characters: digits, spaces, +, -, ()",
     )
     region: Optional[str] = Field(default=None, max_length=100)
+    code: Optional[str] = Field(default=None, max_length=12, pattern=r"^[A-Za-z0-9-]*$",
+                                description="Short code used in NC numbers, e.g. CBD")
 
-    @field_validator("name", "address", "contact_number", "region", mode="before")
+    @field_validator("name", "address", "contact_number", "region", "code", mode="before")
     @classmethod
     def clean_text_inputs(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
         value = sanitize_text(value)
         # The contact number is optional: a blank box means "no number", not an invalid one
-        if info.field_name in ("contact_number", "region") and value == "":
+        if info.field_name in ("contact_number", "region", "code") and value == "":
             return None
+        if info.field_name == "code" and value:
+            value = value.upper()
         if info.field_name == "region" and value:
             value = " ".join(value.split())
         return value
@@ -57,14 +61,18 @@ class SiteUpdate(BaseModel):
         pattern=r"^\+?[0-9\s\-\(\)]+$",
     )
     region: Optional[str] = Field(default=None, max_length=100)
+    code: Optional[str] = Field(default=None, max_length=12, pattern=r"^[A-Za-z0-9-]*$",
+                                description="Short code used in NC numbers, e.g. CBD")
 
-    @field_validator("name", "address", "contact_number", "region", mode="before")
+    @field_validator("name", "address", "contact_number", "region", "code", mode="before")
     @classmethod
     def clean_text_inputs(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
         value = sanitize_text(value)
         # The contact number is optional: a blank box means "no number", not an invalid one
-        if info.field_name in ("contact_number", "region") and value == "":
+        if info.field_name in ("contact_number", "region", "code") and value == "":
             return None
+        if info.field_name == "code" and value:
+            value = value.upper()
         if info.field_name == "region" and value:
             value = " ".join(value.split())
         return value
@@ -78,6 +86,7 @@ class SiteResponse(BaseModel):
     longitude: Optional[float] = None
     contact_number: Optional[str] = None
     region: Optional[str] = None
+    code: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -28,6 +28,7 @@ NEW_COLUMNS = {
     "users": [
         ("must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("token_version", "INTEGER NOT NULL DEFAULT 0"),
+        ("region", "VARCHAR(100)"),
     ],
     "incidents": [
         ("injured_person", "VARCHAR(150)"),
@@ -38,6 +39,10 @@ NEW_COLUMNS = {
     "sites": [
         ("region", "VARCHAR(100)"),
         ("talks_from", "DATE"),
+        ("code", "VARCHAR(12)"),
+    ],
+    "corrective_actions": [
+        ("nc_id", "INTEGER"),
     ],
     "trainings": [
         ("document_name", "VARCHAR(255)"),

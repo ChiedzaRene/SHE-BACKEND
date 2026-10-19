@@ -26,6 +26,7 @@ from models.audit_log import AuditLog
 from models.notification import Notification  # noqa: F401
 from models.she_file import SheFile  # noqa: F401
 from models.safety_talk import SafetyTalk, SafetyTalkMiss  # noqa: F401
+from models.site_inspection import SiteInspection, InspectionNC, InspectionPhoto  # noqa: F401
 
 from routers import (
     auth, scorecard, sites, incidents, audits, 
@@ -37,6 +38,7 @@ from routers.notifications import router as notifications_router
 from routers.dashboard import router as dashboard_router
 from routers.she_files import router as she_files_router
 from routers.safety_talks import router as safety_talks_router
+from routers.site_inspections import router as site_inspections_router
 
 # Optional error monitoring: enabled only when SENTRY_DSN is set and sentry-sdk is installed
 if os.getenv("SENTRY_DSN"):
@@ -234,6 +236,7 @@ app.include_router(notifications_router)
 app.include_router(dashboard_router)
 app.include_router(she_files_router)
 app.include_router(safety_talks_router)
+app.include_router(site_inspections_router)
 
 @app.get("/")
 def root():

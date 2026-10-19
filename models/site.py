@@ -12,6 +12,7 @@ class Site(Base):
     longitude = Column(Float, nullable=True)
     contact_number = Column(String, nullable=True)
     region = Column(String(100), nullable=True)  # e.g. Harare North, Bulawayo: groups sites for reporting
+    code = Column(String(12), nullable=True)     # short code used in NC numbers, e.g. CBD in 15/CBD/01
     # weekly toolbox talks are due from the first Monday on or after this date (empty: since tracking began)
     talks_from = Column(Date, nullable=True)
 

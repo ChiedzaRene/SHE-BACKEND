@@ -17,13 +17,14 @@ class UserCreate(BaseModel):
     full_name: Optional[str] = Field(default=None, max_length=150)
     role: str = Field(
         ...,
-        pattern="^(site_manager|she_team|admin|super_admin)$",
-        description="Role must be site_manager, she_team, admin, or super_admin",
+        pattern="^(site_manager|regional_manager|she_team|admin|super_admin)$",
+        description="Role must be site_manager, regional_manager, she_team, admin, or super_admin",
     )
     site_id: Optional[int] = Field(default=None, gt=0)
+    region: Optional[str] = Field(default=None, max_length=100)
     is_active: bool = True
 
-    @field_validator("full_name", "role", mode="before")
+    @field_validator("full_name", "role", "region", mode="before")
     @classmethod
     def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
@@ -35,12 +36,13 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(default=None, max_length=150)
     role: Optional[str] = Field(
         default=None,
-        pattern="^(site_manager|she_team|admin|super_admin)$",
+        pattern="^(site_manager|regional_manager|she_team|admin|super_admin)$",
     )
     site_id: Optional[int] = Field(default=None, gt=0)
+    region: Optional[str] = Field(default=None, max_length=100)
     is_active: Optional[bool] = None
 
-    @field_validator("full_name", "role", mode="before")
+    @field_validator("full_name", "role", "region", mode="before")
     @classmethod
     def clean_text_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
@@ -72,6 +74,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     role: str
     site_id: Optional[int] = None
+    region: Optional[str] = None
     is_active: bool = True
     must_change_password: bool = False
 
