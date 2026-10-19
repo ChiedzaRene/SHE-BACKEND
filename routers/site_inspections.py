@@ -618,7 +618,7 @@ def review_nc(request: Request, nc_id: int, body: ReviewIn, db: Session = Depend
             action.resolved_by, action.is_successful = nc.reviewed_by_name, "yes"
             action.resolution_notes = nc.completion_notes
         else:
-            action.status, action.is_successful = "open", "no"
+            action.status, action.is_successful = "open", None  # still open: not closed yet
 
     # the report closes once every NC in it is closed
     if all(n.status == "closed" for n in insp.ncs):
