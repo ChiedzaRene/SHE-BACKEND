@@ -75,8 +75,20 @@ def test_full_workflow(client, people):
     insp = client.post(f"/site-inspections/ncs/{nc1['id']}/photos", files={"file": ("pit.png", PNG, "image/png")},
                        headers=she).json()
     photo = insp["ncs"][0]["photos"][0]
-    assert client.post(f"/site-inspections/ncs/{nc1['id']}/photos", files={"file": ("x.pdf", b"%PDF", "application/pdf")},
+    # proof can be a photo, a PDF or a document; nothing that could run in a browser
+    with_pdf = client.post(f"/site-inspections/ncs/{nc1['id']}/photos", files={"file": ("checklist.pdf", b"%PDF-1.4", "application/pdf")},
+                           headers=she).json()
+    assert [(p["filename"], p["is_image"], p["viewable"]) for p in with_pdf["ncs"][0]["photos"]] == [
+        ("pit.png", True, True), ("checklist.pdf", False, True)]
+    assert client.post(f"/site-inspections/ncs/{nc1['id']}/photos", files={"file": ("x.html", b"<script>", "text/html")},
                        headers=she).status_code == 400
+    # proof of the inspection itself
+    rep = client.post(f"/site-inspections/{iid}/attachments",
+                      files={"file": ("signed-checklist.docx", b"PK\x03\x04", "application/octet-stream")}, headers=she).json()
+    doc = rep["attachments"][0]
+    assert doc["kind"] == "report" and doc["viewable"] is False
+    assert client.post(f"/site-inspections/{iid}/attachments", files={"file": ("a.pdf", b"%PDF", "application/pdf")},
+                       headers=mgr).status_code == 403
 
     # submit: NCs go to the regional office of the site's region
     sub = client.post(f"/site-inspections/{iid}/submit", headers=she).json()
@@ -88,8 +100,11 @@ def test_full_workflow(client, people):
     db.close()
     # the site sees the whole report; another region doesn't
     seen = client.get(f"/site-inspections/{iid}", headers=mgr).json()
-    assert seen["introduction"] and seen["ncs"][0]["photos"]
+    assert seen["introduction"] and seen["ncs"][0]["photos"] and seen["attachments"]
     assert client.get(f"/site-inspections/photos/{photo['id']}", headers=mgr).content == PNG
+    word = client.get(f"/site-inspections/photos/{doc['id']}", headers=mgr)
+    assert word.status_code == 200 and word.headers["content-disposition"].startswith("attachment")
+    assert client.get(f"/site-inspections/photos/{doc['id']}", headers=people["other_region"]).status_code == 404
     assert client.get(f"/site-inspections/{iid}", headers=people["other_region"]).status_code == 404
 
     # the regional office acknowledges: recommendation, who, deadline -> a corrective action opens
@@ -125,11 +140,13 @@ def test_full_workflow(client, people):
                        headers=she).status_code == 409          # not completed yet
     done = client.post(f"/site-inspections/ncs/{nc1['id']}/complete",
                        data={"notes": "Separator drained by Clean Co on 20 Oct, receipt filed."},
-                       files={"file": ("after.png", PNG, "image/png")}, headers=mgr)
+                       files=[("files", ("after.png", PNG, "image/png")), ("files", ("receipt.pdf", b"%PDF-1.4", "application/pdf"))],
+                       headers=mgr)
     assert done.status_code == 200, done.text
     n = done.json()["ncs"][0]
     assert n["status"] == "completed" and n["completed_by_name"] == "Manager"
-    assert [p["kind"] for p in n["photos"]] == ["finding", "evidence"]
+    assert [(p["kind"], p["filename"]) for p in n["photos"]] == [
+        ("finding", "pit.png"), ("finding", "checklist.pdf"), ("evidence", "after.png"), ("evidence", "receipt.pdf")]
     # not done properly: back to the site with a reason
     assert client.post(f"/site-inspections/ncs/{nc1['id']}/review", json={"outcome": "open"},
                        headers=she).status_code == 422

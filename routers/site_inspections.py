@@ -11,7 +11,7 @@
 """
 import re
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -26,7 +26,7 @@ from models.user import User
 from services.audit_service import log_action
 from services.auth_services import get_current_user, require_role
 from services.clock import local_today
-from services.files import clean_filename, file_response, read_upload
+from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.notifications import notify, short, site_managers, team, who
 from services.richtext import clean_html, plain_text
 
@@ -34,7 +34,8 @@ router = APIRouter(prefix="/site-inspections", tags=["Inspections"])
 
 SHE_ROLES = ("she_team", "admin", "super_admin")
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
-MAX_PHOTOS = 10
+MAX_PROOF = 10          # proof files per report or per NC
+MAX_EVIDENCE = 5        # proof files sent with one completed corrective action
 SECTIONS = ("introduction", "criteria", "objectives", "findings_summary", "conformities")
 
 
@@ -120,7 +121,7 @@ def _nc_out(nc: InspectionNC, names: dict, user: User, insp: SiteInspection, sit
         "completed_at": _iso(nc.completed_at),
         "reviewed_by_name": nc.reviewed_by_name, "reviewed_at": _iso(nc.reviewed_at),
         "review_outcome": nc.review_outcome, "review_comment": nc.review_comment,
-        "photos": [{"id": p.id, "kind": p.kind, "filename": p.filename} for p in nc.photos],
+        "photos": [_att_out(p) for p in nc.photos],
         "can": {
             "edit": _is_she(user) and insp.status == "draft",
             "acknowledge": nc.status in ("raised", "assigned") and (_regional_for(user, site) or _is_admin(user)),
@@ -128,6 +129,20 @@ def _nc_out(nc: InspectionNC, names: dict, user: User, insp: SiteInspection, sit
             "review": nc.status == "completed" and _is_she(user),
         },
     }
+
+
+def _att_out(p: InspectionPhoto) -> dict:
+    """A proof file: images show as pictures; PDFs open in the app; other documents are downloaded."""
+    return {"id": p.id, "kind": p.kind, "filename": p.filename, "content_type": p.content_type, "size": p.size,
+            "is_image": p.content_type in IMAGE_TYPES, "viewable": is_viewable(p.filename)}
+
+
+async def _store(db: Session, upload: UploadFile, user: User, **target) -> None:
+    """Keep one proof file (photo, PDF or document) for the report or an NC."""
+    filename, content_type = clean_filename(upload)
+    data = await read_upload(upload)
+    db.add(InspectionPhoto(filename=filename, content_type=content_type, size=len(data), data=data,
+                           uploaded_by=user.id, **target))
 
 
 def _may_complete(user: User, nc: InspectionNC, site: Site) -> bool:
@@ -172,6 +187,7 @@ def _full(db: Session, insp: SiteInspection, site: Site, user: User) -> dict:
     out.update({s: getattr(insp, s) for s in SECTIONS})
     out.update({
         "submitted_by_name": names.get(insp.submitted_by),
+        "attachments": [_att_out(p) for p in insp.attachments],
         "ncs": [_nc_out(nc, names, user, insp, site, today) for nc in insp.ncs],
         "previous_ncs": [
             {**_nc_out(nc, names, user, prev_inspections[nc.inspection_id], site, today),
@@ -411,29 +427,51 @@ def delete_nc(nc_id: int, db: Session = Depends(get_db), current_user: User = De
 
 
 @router.post("/ncs/{nc_id}/photos", status_code=201)
-async def add_photo(nc_id: int, file: UploadFile = File(...), db: Session = Depends(get_db),
-                    current_user: User = Depends(require_role(*SHE_ROLES))):
+async def add_nc_proof(nc_id: int, file: UploadFile = File(...), db: Session = Depends(get_db),
+                       current_user: User = Depends(require_role(*SHE_ROLES))):
+    """Proof of the NC: a photo, PDF or document (e.g. the page of the checklist)."""
     nc, insp, site = _load_nc(db, current_user, nc_id)
     _draft_only(insp)
-    filename, content_type = clean_filename(file)
-    if content_type not in IMAGE_TYPES:
-        raise HTTPException(status_code=400, detail="Photos must be images (PNG, JPG, GIF or WebP).")
-    if len([p for p in nc.photos if p.kind == "finding"]) >= MAX_PHOTOS:
-        raise HTTPException(status_code=400, detail=f"An NC can have up to {MAX_PHOTOS} photos.")
-    data = await read_upload(file)
-    db.add(InspectionPhoto(nc_id=nc.id, kind="finding", filename=filename, content_type=content_type,
-                           size=len(data), data=data, uploaded_by=current_user.id))
+    if len([p for p in nc.photos if p.kind == "finding"]) >= MAX_PROOF:
+        raise HTTPException(status_code=400, detail=f"An NC can have up to {MAX_PROOF} photos or documents.")
+    await _store(db, file, current_user, nc_id=nc.id, kind="finding")
     db.commit()
     db.refresh(insp)
     return _full(db, insp, site, current_user)
 
 
+@router.post("/{inspection_id}/attachments", status_code=201)
+async def add_report_proof(inspection_id: int, file: UploadFile = File(...), db: Session = Depends(get_db),
+                           current_user: User = Depends(require_role(*SHE_ROLES))):
+    """Proof of the inspection itself: the signed checklist, photos of the visit, other documents."""
+    insp, site = _load(db, current_user, inspection_id)
+    _draft_only(insp)
+    if len(insp.attachments) >= MAX_PROOF:
+        raise HTTPException(status_code=400, detail=f"A report can have up to {MAX_PROOF} supporting files.")
+    await _store(db, file, current_user, inspection_id=insp.id, kind="report")
+    db.commit()
+    db.refresh(insp)
+    return _full(db, insp, site, current_user)
+
+
+def _attachment(db: Session, user: User, photo_id: int, with_data: bool = False):
+    """The proof file and the report it belongs to (checking the person may see that report)."""
+    query = db.query(InspectionPhoto)
+    if with_data:
+        query = query.options(undefer(InspectionPhoto.data))
+    photo = query.filter(InspectionPhoto.id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="File not found")
+    if photo.nc_id:
+        _, insp, site = _load_nc(db, user, photo.nc_id)
+    else:
+        insp, site = _load(db, user, photo.inspection_id)
+    return photo, insp, site
+
+
 @router.delete("/photos/{photo_id}")
 def delete_photo(photo_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_role(*SHE_ROLES))):
-    photo = db.query(InspectionPhoto).filter(InspectionPhoto.id == photo_id).first()
-    if not photo:
-        raise HTTPException(status_code=404, detail="Photo not found")
-    nc, insp, site = _load_nc(db, current_user, photo.nc_id)
+    photo, insp, site = _attachment(db, current_user, photo_id)
     _draft_only(insp)
     db.delete(photo)
     db.commit()
@@ -442,12 +480,12 @@ def delete_photo(photo_id: int, db: Session = Depends(get_db), current_user: Use
 
 
 @router.get("/photos/{photo_id}")
-def get_photo(photo_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    photo = db.query(InspectionPhoto).options(undefer(InspectionPhoto.data)).filter(InspectionPhoto.id == photo_id).first()
-    if not photo:
-        raise HTTPException(status_code=404, detail="Photo not found")
-    _load_nc(db, current_user, photo.nc_id)
-    return file_response(photo.data, photo.content_type, photo.filename, "inline")
+def get_photo(photo_id: int, download: bool = Query(False), db: Session = Depends(get_db),
+              current_user: User = Depends(get_current_user)):
+    """Images and PDFs open in the app; anything else (or ?download=true) is downloaded."""
+    photo, _, _ = _attachment(db, current_user, photo_id, with_data=True)
+    kind = "inline" if is_viewable(photo.filename) and not download else "attachment"
+    return file_response(photo.data, photo.content_type, photo.filename, kind)
 
 
 def _regional_people(db: Session, site: Site) -> list:
@@ -557,10 +595,10 @@ def acknowledge_nc(request: Request, nc_id: int, body: AcknowledgeIn, db: Sessio
 @router.post("/ncs/{nc_id}/complete")
 async def complete_nc(
     request: Request, nc_id: int, notes: str = Form(..., min_length=3, max_length=20000),
-    file: Optional[UploadFile] = File(None), db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    files: List[UploadFile] = File(default=[]), file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ):
-    """The person responsible says the action is done, how it was closed, and may attach a photo."""
+    """The person responsible says the action is done and how it was closed, with photos or documents as proof."""
     nc, insp, site = _load_nc(db, current_user, nc_id)
     if nc.status != "assigned":
         raise HTTPException(status_code=409, detail="This NC isn't waiting for its corrective action.")
@@ -569,13 +607,11 @@ async def complete_nc(
     text = " ".join(notes.split()) if "\n" not in notes else notes.strip()
     if len(text) < 3:
         raise HTTPException(status_code=422, detail="Say how the corrective action was closed.")
-    if file is not None and file.filename:
-        filename, content_type = clean_filename(file)
-        if content_type not in IMAGE_TYPES:
-            raise HTTPException(status_code=400, detail="Evidence must be a photo (PNG, JPG, GIF or WebP).")
-        data = await read_upload(file)
-        db.add(InspectionPhoto(nc_id=nc.id, kind="evidence", filename=filename, content_type=content_type,
-                               size=len(data), data=data, uploaded_by=current_user.id))
+    uploads = [f for f in list(files or []) + ([file] if file is not None else []) if f is not None and f.filename]
+    if len(uploads) > MAX_EVIDENCE:
+        raise HTTPException(status_code=400, detail=f"Attach up to {MAX_EVIDENCE} photos or documents.")
+    for upload in uploads:
+        await _store(db, upload, current_user, nc_id=nc.id, kind="evidence")
     nc.completion_notes, nc.completed_by, nc.completed_at = text, current_user.id, datetime.now(timezone.utc)
     nc.status = "completed"
     db.commit()

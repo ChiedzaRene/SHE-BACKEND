@@ -33,6 +33,9 @@ class SiteInspection(Base):
 
     ncs = relationship("InspectionNC", back_populates="inspection", order_by="InspectionNC.seq",
                        cascade="all, delete-orphan")
+    # proof of the inspection itself: photos, the signed checklist, other documents
+    attachments = relationship("InspectionPhoto", back_populates="inspection", cascade="all, delete-orphan",
+                               order_by="InspectionPhoto.id")
 
 
 class InspectionNC(Base):
@@ -76,12 +79,17 @@ class InspectionNC(Base):
 
 
 class InspectionPhoto(Base):
-    """A picture of the finding ("finding"), or evidence that the action was done ("evidence")."""
+    """A photo or document kept as proof.
+
+    kind: "report" (proof of the inspection, attached to the report), "finding" (proof of an NC),
+    "evidence" (proof that the NC's corrective action was done).
+    """
 
     __tablename__ = "inspection_photos"
 
     id = Column(Integer, primary_key=True, index=True)
-    nc_id = Column(Integer, ForeignKey("inspection_ncs.id", ondelete="CASCADE"), nullable=False, index=True)
+    nc_id = Column(Integer, ForeignKey("inspection_ncs.id", ondelete="CASCADE"), nullable=True, index=True)
+    inspection_id = Column(Integer, ForeignKey("site_inspections.id", ondelete="CASCADE"), nullable=True, index=True)
     kind = Column(String(20), nullable=False, default="finding")
     filename = Column(String(255), nullable=False)
     content_type = Column(String(120), nullable=False)
@@ -91,3 +99,4 @@ class InspectionPhoto(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     nc = relationship("InspectionNC", back_populates="photos")
+    inspection = relationship("SiteInspection", back_populates="attachments")
