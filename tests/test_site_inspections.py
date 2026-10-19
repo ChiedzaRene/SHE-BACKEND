@@ -117,7 +117,8 @@ def test_full_workflow(client, people):
     # the action is managed from the inspection, not the corrective actions page
     assert client.post(f"/corrective-actions/{ca.id}/resolve", json={"resolution_notes": "x", "is_successful": "yes"},
                        headers=people["admin"]).status_code == 409
-    assert any(a["nc_id"] == nc1["id"] for a in client.get("/corrective-actions/", headers=reg).json())
+    assert any(a["nc_id"] == nc1["id"] and a["inspection_id"] == iid
+               for a in client.get("/corrective-actions/", headers=reg).json())
 
     # the site completes it and says how; SHE reviews
     assert client.post(f"/site-inspections/ncs/{nc1['id']}/review", json={"outcome": "closed"},

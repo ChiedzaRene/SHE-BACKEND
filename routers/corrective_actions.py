@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.corrective_action import CorrectiveAction
 from models.site import Site
+from models.site_inspection import InspectionNC
 from models.user import User
 from schemas.corrective_action import (
     CorrectiveActionCreate,
@@ -87,7 +88,11 @@ def get_all_corrective_actions(
         region_sites = [sid for (sid,) in db.query(Site.id).filter(Site.region == current_user.region).all()]
         query = query.filter(CorrectiveAction.site_id.in_(region_sites or [0]))
     actions = page.apply(query, response, CorrectiveAction.id.desc()).all()
-    return [_to_response(action) for action in actions]
+    # actions opened for inspection NCs link back to their report
+    nc_ids = [a.nc_id for a in actions if a.nc_id]
+    reports = dict(db.query(InspectionNC.id, InspectionNC.inspection_id).filter(InspectionNC.id.in_(nc_ids)).all()) \
+        if nc_ids else {}
+    return [{**_to_response(action), "inspection_id": reports.get(action.nc_id)} for action in actions]
 
 
 @router.get("/incident/{incident_id}", response_model=List[CorrectiveActionResponse])
