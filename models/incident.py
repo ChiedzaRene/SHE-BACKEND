@@ -19,6 +19,9 @@ class Incident(Base):
     occurred_at = Column(DateTime, nullable=True)
     # Who was hurt (injuries only). Kept as a name: the person may not have an account.
     injured_person = Column(String(150), nullable=True)
+    # What will be done about it. The description is the record of what happened and can't be changed;
+    # the action plan can be filled in and updated later.
+    action_plan = Column(String, nullable=True)
     
 
 

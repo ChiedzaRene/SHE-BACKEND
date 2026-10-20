@@ -64,6 +64,12 @@ def issue_token(user: User) -> str:
 # While a password change is required, only these are allowed (so the user can actually do it)
 ALLOWED_WHEN_PASSWORD_CHANGE_REQUIRED = {"/users/me", "/auth/change-password"}
 
+# Operations and directors oversee every site but don't change records. They may only read, plus look
+# after their own account and notifications.
+READ_ONLY_ROLES = ("operations", "director")
+OVERSIGHT_ROLES = READ_ONLY_ROLES
+READ_ONLY_MAY_WRITE = {"/users/me", "/auth/change-password", "/notifications/read", "/notifications/unread"}
+
 
 def get_user_by_email(db: Session, email: str):
     return db.query(User).filter(User.email == email).first()
@@ -108,6 +114,12 @@ def get_current_user(
     # existed carry no "tv" and count as version 0, so deploying it does not sign anyone out.
     if payload.get("tv", 0) != (user.token_version or 0):
         raise credentials_exception
+    if (user.role in READ_ONLY_ROLES and request.method not in ("GET", "HEAD", "OPTIONS")
+            and request.url.path.rstrip("/") not in READ_ONLY_MAY_WRITE):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account can view records but not change them.",
+        )
     if user.must_change_password and request.url.path not in ALLOWED_WHEN_PASSWORD_CHANGE_REQUIRED:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

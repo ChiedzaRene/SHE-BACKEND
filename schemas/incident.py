@@ -35,8 +35,10 @@ class IncidentCreate(BaseModel):
     occurred_at: Optional[datetime] = None
     # Name of the person hurt (injuries only)
     injured_person: Optional[str] = Field(default=None, max_length=150)
+    # What will be done about it (separate from the description, which can't be changed)
+    action_plan: Optional[str] = Field(default=None, max_length=5000)
 
-    @field_validator("type", "description", "severity", "injured_person", mode="before")
+    @field_validator("type", "description", "severity", "injured_person", "action_plan", mode="before")
     @classmethod
     def clean_string_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
@@ -60,8 +62,10 @@ class IncidentUpdate(BaseModel):
     occurred_at: Optional[datetime] = None
     # Name of the person hurt (injuries only)
     injured_person: Optional[str] = Field(default=None, max_length=150)
+    # What will be done about it (separate from the description, which can't be changed)
+    action_plan: Optional[str] = Field(default=None, max_length=5000)
 
-    @field_validator("type", "description", "severity", "injured_person", mode="before")
+    @field_validator("type", "description", "severity", "injured_person", "action_plan", mode="before")
     @classmethod
     def clean_string_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
@@ -85,6 +89,7 @@ class IncidentResponse(BaseModel):
     lost_time_days: Optional[int] = 0
     occurred_at: Optional[datetime] = None
     injured_person: Optional[str] = None
+    action_plan: Optional[str] = None
 
     class Config:
         from_attributes = True

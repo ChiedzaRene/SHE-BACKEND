@@ -24,7 +24,7 @@ from models.site import Site
 from models.site_inspection import InspectionNC, InspectionPhoto, SiteInspection
 from models.user import User
 from services.audit_service import log_action
-from services.auth_services import get_current_user, require_role
+from services.auth_services import OVERSIGHT_ROLES, get_current_user, require_role
 from services.clock import local_today
 from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.notifications import notify, short, site_managers, team, who
@@ -60,6 +60,8 @@ def _can_see(user: User, insp: SiteInspection, site: Optional[Site]) -> bool:
         return False
     if user.role == "site_manager":
         return user.site_id == insp.site_id
+    if user.role in OVERSIGHT_ROLES:  # operations and directors read every submitted report
+        return True
     return _regional_for(user, site)
 
 
