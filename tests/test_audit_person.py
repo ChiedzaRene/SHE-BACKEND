@@ -159,7 +159,7 @@ def test_very_long_typed_emails_cannot_bloat_the_log(client):
     db.close()
 
 
-def test_inspections_scorecards_and_registrations_are_recorded(client, auth):
+def test_inspections_and_registrations_are_recorded(client, auth):
     mgr = auth["mgr"]
     r = client.post("/inspections/", data={"site_id": 1, "inspection_date": date.today().isoformat(), "checklist_score": 80, "she_file_score": 60},
                     headers=mgr)
@@ -170,13 +170,6 @@ def test_inspections_scorecards_and_registrations_are_recorded(client, auth):
     assert logs(action="UPDATE_INSPECTION", resource_id=iid)
     assert client.delete(f"/inspections/{iid}", headers=auth["she"]).status_code == 200
     assert logs(action="DELETE_INSPECTION", resource_id=iid)
-
-    sc = client.post("/scorecard/", json={"site_id": 1, "items": [{"requirement_ref": "FWA-1", "score": 4}]}, headers=mgr)
-    assert sc.status_code == 201
-    sid = sc.json()["id"]
-    assert logs(action="CREATE_SCORECARD", resource_id=sid)[-1].user_email == "mgr@x.com"
-    assert client.delete(f"/scorecard/{sid}", headers=auth["admin"]).status_code == 204
-    assert logs(action="DELETE_SCORECARD", resource_id=sid)
 
     reg = client.post("/auth/register", json={"email": "reg@trail.com", "password": PW, "role": "she_team"}, headers=auth["admin"])
     assert reg.status_code == 200

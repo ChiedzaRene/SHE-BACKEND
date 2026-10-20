@@ -31,7 +31,7 @@ class IncidentCreate(BaseModel):
     )
     total_hours_worked: Optional[int] = Field(default=0, ge=0)
     lost_time_days: Optional[int] = Field(default=0, ge=0)
-    # When the incident actually happened; TRIR/LTIFR files it under this month
+    # When the incident actually happened; LTIFR files it under this month
     occurred_at: Optional[datetime] = None
     # Name of the person hurt (injuries only)
     injured_person: Optional[str] = Field(default=None, max_length=150)

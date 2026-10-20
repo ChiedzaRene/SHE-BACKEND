@@ -27,14 +27,13 @@ def update_safety_targets(
     current_user: User = Depends(require_role("admin", "super_admin")),
 ):
     before = get_safety_limits(db)
-    set_safety_limits(db, current_user.id, payload.trir_limit, payload.ltifr_limit)
+    set_safety_limits(db, current_user.id, payload.ltifr_limit)
     log_action(
         db=db,
         user=current_user,
         action="UPDATE_SETTINGS",
         resource="settings",
         details=(
-            f"TRIR limit {before['trir_limit']:g} -> {payload.trir_limit:g}; "
             f"LTIFR limit {before['ltifr_limit']:g} -> {payload.ltifr_limit:g}"
         ),
         ip_address=request.client.host if request.client else None,

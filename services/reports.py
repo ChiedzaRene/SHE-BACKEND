@@ -17,9 +17,10 @@ from models.audit import Audit
 from models.corrective_action import CorrectiveAction
 from models.incident import Incident
 from models.inspections import Inspection
-from models.legal import Legal
+from models.site_licence import SiteLicence
 from models.site import Site
 from models.training import Training
+from services.licences import LICENCE_TYPES, status_of
 from services.settings import get_safety_limits
 from services.safety_metrics import (
     combine,
@@ -29,6 +30,8 @@ from services.safety_metrics import (
 )
 
 NA = "N/A"
+LICENCE_STATUS = {"expired": "Expired", "missing": "Not recorded", "due_1_month": "Due within a month",
+                  "due_3_months": "Due within 3 months"}
 MAX_REGISTER_ROWS = 5000
 ACTION_DONE = ("resolved", "closed")
 
@@ -80,9 +83,9 @@ def _doc(kind, title, subtitle, kpis, tables, notes=None) -> dict:
 
 
 def _status(stats: dict, limits: dict) -> str:
-    if stats["trir"] is None and stats["ltifr"] is None:
+    if stats["ltifr"] is None:
         return "No hours data"
-    over = (stats["trir"] or 0) > limits["trir_limit"] or (stats["ltifr"] or 0) > limits["ltifr_limit"]
+    over = stats["ltifr"] > limits["ltifr_limit"]
     return "Action required" if over else "Within limits"
 
 
@@ -146,9 +149,7 @@ def performance_report(db: Session, site_id: Optional[int], month: Optional[str]
 
     kpis = [
         ("Hours worked", _num(m["hours_worked"]) if m["hours_reported"] else NA),
-        ("TRIR (month)", _rate(m["trir"])),
         ("LTIFR (month)", _rate(m["ltifr"])),
-        ("TRIR (rolling 12 mo)", _rate(r["trir"])),
         ("LTIFR (rolling 12 mo)", _rate(r["ltifr"])),
         ("Incidents logged", len(incidents)),
         ("Open corrective actions", open_a),
@@ -171,13 +172,13 @@ def performance_report(db: Session, site_id: Optional[int], month: Optional[str]
             a = actions.get(sid, {"open": 0, "overdue": 0})
             rows.append([name, _num(s["hours_worked"]) if s["hours_reported"] else NA,
                          s["recordable_incidents"], s["lost_time_injuries"],
-                         _rate(s["trir"]), _rate(s["ltifr"]), a["open"], a["overdue"]])
+                         _rate(s["ltifr"]), a["open"], a["overdue"]])
         tables.append({"title": "Sites this month",
-                       "columns": ["Site", "Hours", "Recordable", "Lost-time", "TRIR", "LTIFR",
+                       "columns": ["Site", "Hours", "Recordable", "Lost-time", "LTIFR",
                                    "Open actions", "Overdue"],
                        "rows": rows})
     notes = [
-        "TRIR and LTIFR are per 200,000 hours worked. Recordable = injury incidents; "
+        "LTIFR is per 200,000 hours worked. Recordable = injury incidents; "
         "lost-time = injuries with lost days. Only months with hours entered are counted.",
     ]
     if not m["hours_reported"]:
@@ -191,7 +192,6 @@ def performance_report(db: Session, site_id: Optional[int], month: Optional[str]
 def compliance_report(db: Session, site_id: Optional[int]) -> dict:
     site_ids, scope = _scope(db, site_id)
     names = _site_names(db, site_ids)
-    now = datetime.now()
 
     audits: dict = {}
     for sid, score, status, d in db.query(Audit.site_id, Audit.score, Audit.status, Audit.date).filter(
@@ -219,22 +219,24 @@ def compliance_report(db: Session, site_id: Optional[int]) -> dict:
         t[1] += trained or 0
         t[2] += total or 0
 
-    legal_rows, bad, expiring = [], 0, 0
-    for rec in (db.query(Legal).filter(Legal.site_id.in_(site_ids))
-                .order_by(Legal.expiry_date.is_(None), Legal.expiry_date)):
-        days = (rec.expiry_date - now).days if rec.expiry_date else None
-        status = (rec.status or "").lower()
-        is_expired = status == "expired" or (days is not None and days < 0)
-        non_compliant = status == "non_compliant"
-        due_soon = days is not None and 0 <= days <= 60
-        if is_expired or non_compliant:
-            bad += 1
-        elif due_soon:
-            expiring += 1
-        if is_expired or non_compliant or due_soon or status == "pending_review":
-            legal_rows.append([names.get(rec.site_id, ""), rec.requirements,
-                               (rec.status or "").replace("_", " ").title(),
-                               _day(rec.expiry_date), "" if days is None else days])
+    # Licences: every site should hold each type; list the ones expired, missing or due within 3 months
+    today = date.today()
+    current = {(lic.site_id, lic.licence_type): lic for lic in db.query(SiteLicence).filter(
+        SiteLicence.site_id.in_(site_ids), SiteLicence.superseded_by.is_(None))}
+    licence_rows, bad, expiring = [], 0, 0
+    for sid, name in names.items():
+        for key, (lic_name, _issuer) in LICENCE_TYPES.items():
+            lic = current.get((sid, key))
+            status = status_of(lic.expiry_date if lic else None, today)
+            if status in ("expired", "missing"):
+                bad += 1
+            elif status != "valid":
+                expiring += 1
+            if status != "valid":
+                licence_rows.append([name, lic_name, LICENCE_STATUS[status],
+                                     _day(lic.expiry_date) if lic else "",
+                                     (lic.expiry_date - today).days if lic else ""])
+    licence_rows.sort(key=lambda r: (r[4] == "", r[4] if r[4] != "" else 0))
 
     all_audits = [a for a in audits.values()]
     n_audits = sum(a["n"] for a in all_audits)
@@ -245,8 +247,8 @@ def compliance_report(db: Session, site_id: Optional[int]) -> dict:
         ("Audits on record", n_audits),
         ("Average audit score", NA if avg_audit is None else f"{avg_audit:.1f}"),
         ("Open audits", sum(a["open"] for a in all_audits)),
-        ("Legal: expired / non-compliant", bad),
-        ("Legal: expiring in 60 days", expiring),
+        ("Licences: expired / not recorded", bad),
+        ("Licences: due within 3 months", expiring),
         ("Training coverage", NA if not t_total else f"{100 * t_trained / t_total:.0f}%"),
     ]
     site_rows = []
@@ -267,14 +269,14 @@ def compliance_report(db: Session, site_id: Optional[int]) -> dict:
         {"title": "Audits, inspections and training by site",
          "columns": ["Site", "Audits", "Avg score", "Open", "Last audit", "Avg inspection %", "Training coverage"],
          "rows": site_rows},
-        {"title": "Legal records needing attention",
-         "columns": ["Site", "Requirement", "Status", "Expiry", "Days left"],
-         "rows": legal_rows},
+        {"title": "Licences needing attention",
+         "columns": ["Site", "Licence", "Status", "Due", "Days left"],
+         "rows": licence_rows},
     ]
     return _doc("compliance", "Compliance Status Report",
                 f"{scope} · as of {date.today().isoformat()}", kpis, tables,
-                ["Legal records are listed when expired, non-compliant, pending review or expiring "
-                 "within 60 days. A negative 'Days left' means the record has already expired."])
+                ["Licences are listed when expired, not recorded or due within 3 months. "
+                 "A negative 'Days left' means the licence has already expired."])
 
 
 # ─── 3. Incident register ───────────────────────────────────────────────────
@@ -329,26 +331,26 @@ def leaderboard_report(db: Session, period: str) -> dict:
     actions = _action_counts(db, list(names), datetime.now())
     total = combine(stats.values())
 
-    # Best (lowest TRIR) first; sites without hours data go last so they can't look "best"
-    order = sorted(names, key=lambda sid: (stats[sid]["trir"] is None, stats[sid]["trir"] or 0,
-                                           stats[sid]["ltifr"] or 0, names[sid]))
+    # Best (lowest LTIFR, then fewest injuries) first; sites without hours data go last so they can't look "best"
+    order = sorted(names, key=lambda sid: (stats[sid]["ltifr"] is None, stats[sid]["ltifr"] or 0,
+                                           stats[sid]["recordable_incidents"], names[sid]))
     rows = []
     for rank, sid in enumerate(order, 1):
         s = stats[sid]
         a = actions.get(sid, {"open": 0, "overdue": 0})
-        rows.append([rank if s["trir"] is not None else "", names[sid],
+        rows.append([rank if s["ltifr"] is not None else "", names[sid],
                      _num(s["hours_worked"]) if s["hours_reported"] else NA,
                      s["recordable_incidents"], s["lost_time_injuries"],
-                     _rate(s["trir"]), _rate(s["ltifr"]), a["open"], a["overdue"], _status(s, limits)])
+                     _rate(s["ltifr"]), a["open"], a["overdue"], _status(s, limits)])
     flagged = sum(1 for sid in names if _status(stats[sid], limits) == "Action required")
     label = "Rolling 12 months" if period == "12m" else f"Year to date {date.today().year}"
     kpis = [("Sites", len(names)), ("Sites reporting hours", sum(1 for s in stats.values() if s["hours_reported"])),
-            ("Group TRIR", _rate(total["trir"])), ("Group LTIFR", _rate(total["ltifr"])),
+            ("Group LTIFR", _rate(total["ltifr"])),
             ("Sites needing action", flagged)]
     return _doc("leaderboard", "Site Comparison", label, kpis,
-                [{"title": "Ranked by TRIR (lowest first)",
-                  "columns": ["Rank", "Site", "Hours", "Recordable", "Lost-time", "TRIR", "LTIFR",
+                [{"title": "Ranked by LTIFR (lowest first)",
+                  "columns": ["Rank", "Site", "Hours", "Recordable", "Lost-time", "LTIFR",
                               "Open actions", "Overdue", "Status"],
                   "rows": rows}],
-                [f"Limits: TRIR {limits['trir_limit']:g}, LTIFR {limits['ltifr_limit']:g} per 200,000 hours. Sites with no hours "
+                [f"Limit: LTIFR {limits['ltifr_limit']:g} per 200,000 hours. Sites with no hours "
                  "entered are listed last, unranked."])

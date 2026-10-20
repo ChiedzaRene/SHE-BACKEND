@@ -2,13 +2,13 @@
 from sqlalchemy.orm import Session
 
 from models.app_setting import AppSetting
-from services.safety_metrics import LTIFR_LIMIT, RATE_BASIS_HOURS, TRIR_LIMIT
+from services.safety_metrics import LTIFR_LIMIT, RATE_BASIS_HOURS
 
-DEFAULTS = {"trir_limit": TRIR_LIMIT, "ltifr_limit": LTIFR_LIMIT}
+DEFAULTS = {"ltifr_limit": LTIFR_LIMIT}
 
 
 def get_safety_limits(db: Session) -> dict:
-    """The TRIR/LTIFR limits above which a site is flagged. Bad stored values fall back to defaults."""
+    """The LTIFR limit above which a site is flagged. Bad stored values fall back to defaults."""
     limits = dict(DEFAULTS)
     for row in db.query(AppSetting).filter(AppSetting.key.in_(list(DEFAULTS))):
         try:
@@ -31,8 +31,8 @@ def safety_targets_payload(db: Session) -> dict:
     }
 
 
-def set_safety_limits(db: Session, user_id: int, trir_limit: float, ltifr_limit: float) -> None:
-    for key, value in (("trir_limit", trir_limit), ("ltifr_limit", ltifr_limit)):
+def set_safety_limits(db: Session, user_id: int, ltifr_limit: float) -> None:
+    for key, value in (("ltifr_limit", ltifr_limit),):
         row = db.query(AppSetting).filter(AppSetting.key == key).first()
         if row:
             row.value, row.updated_by = repr(float(value)), user_id

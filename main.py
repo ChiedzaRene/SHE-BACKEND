@@ -30,8 +30,8 @@ from models.site_inspection import SiteInspection, InspectionNC, InspectionPhoto
 from models.site_licence import SiteLicence  # noqa: F401
 
 from routers import (
-    auth, scorecard, sites, incidents, audits, 
-    legal, trainings, users, corrective_actions, super_admin, site_hours, reports, settings
+    auth, sites, incidents, audits,
+    trainings, users, corrective_actions, super_admin, site_hours, reports, settings
 )
 from routers.inspections import router as inspections, uploads_router
 from routers.audit_log import router as audit_log_router
@@ -228,11 +228,9 @@ app.include_router(auth.router)
 app.include_router(sites.router)
 app.include_router(incidents.router)
 app.include_router(audits.router)
-app.include_router(legal.router)
 app.include_router(trainings.router)
 app.include_router(users.router)
 app.include_router(corrective_actions.router)
-app.include_router(scorecard.router)
 app.include_router(inspections)
 app.include_router(uploads_router)
 app.include_router(audit_log_router)

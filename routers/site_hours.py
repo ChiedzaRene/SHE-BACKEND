@@ -40,7 +40,7 @@ def upsert_site_hours(
     payload: SiteHoursUpsert,
     db: Session = Depends(get_db),
     # Each site's manager enters their own site's monthly hours and headcount. Admins can correct them.
-    # The SHE team only reads them, so the figures behind TRIR/LTIFR come from the site itself.
+    # The SHE team only reads them, so the figures behind LTIFR come from the site itself.
     current_user: User = Depends(require_role("site_manager", "admin", "super_admin")),
 ):
     if current_user.role == "site_manager" and payload.site_id != current_user.site_id:

@@ -96,12 +96,13 @@ def test_targets_defaults_visible_to_everyone(client, auth):
     for who in ("mgr", "she", "admin"):
         r = client.get("/settings/safety-targets", headers=auth[who])
         assert r.status_code == 200
-        assert (r.json()["trir_limit"], r.json()["ltifr_limit"], r.json()["rate_basis_hours"]) == (1.5, 0.5, 200000)
+        assert (r.json()["ltifr_limit"], r.json()["rate_basis_hours"]) == (0.5, 200000)
+        assert "trir_limit" not in r.json()
     assert client.get("/settings/safety-targets").status_code == 401
 
 
 def test_only_admins_can_change_targets(client, auth):
-    body = {"trir_limit": 2.0, "ltifr_limit": 1.0}
+    body = {"ltifr_limit": 1.0}
     assert client.put("/settings/safety-targets", json=body).status_code == 401
     assert client.put("/settings/safety-targets", json=body, headers=auth["mgr"]).status_code == 403
     assert client.put("/settings/safety-targets", json=body, headers=auth["she"]).status_code == 403
@@ -109,11 +110,11 @@ def test_only_admins_can_change_targets(client, auth):
 
 def test_target_validation(client, auth):
     put = lambda b: client.put("/settings/safety-targets", json=b, headers=auth["admin"]).status_code
-    assert put({"trir_limit": 0, "ltifr_limit": 1}) == 422
-    assert put({"trir_limit": -1, "ltifr_limit": 1}) == 422
-    assert put({"trir_limit": 1, "ltifr_limit": 1000}) == 422
-    assert put({"trir_limit": "abc", "ltifr_limit": 1}) == 422
-    assert put({"trir_limit": 1}) == 422
+    assert put({"ltifr_limit": 0}) == 422
+    assert put({"ltifr_limit": -1}) == 422
+    assert put({"ltifr_limit": 1000}) == 422
+    assert put({"ltifr_limit": "abc"}) == 422
+    assert put({}) == 422
 
 
 def test_changing_targets_changes_report_status_and_is_logged(client, auth):
@@ -131,26 +132,26 @@ def test_changing_targets_changes_report_status_and_is_logged(client, auth):
     db.flush()
     db.add(SiteHours(site_id=95, period=date.today().replace(day=1), hours_worked=100000, entered_by=1))
     db.add(Incident(site_id=95, user_id=1, type="injury", description="targets test", severity="low",
-                    lost_time_days=0, occurred_at=datetime.now()))
+                    lost_time_days=2, occurred_at=datetime.now()))
     db.commit()
     db.close()
     try:
         doc, rows = board()
-        assert rows["Targets Site"][5] == "2.00" and rows["Targets Site"][9] == "Action required"  # 2.00 > default 1.5
-        assert "TRIR 1.5" in doc["notes"][0]
+        assert rows["Targets Site"][5] == "2.00" and rows["Targets Site"][8] == "Action required"  # 2.00 > default 0.5
+        assert "LTIFR 0.5" in doc["notes"][0]
 
-        r = client.put("/settings/safety-targets", json={"trir_limit": 3.0, "ltifr_limit": 0.5}, headers=auth["admin"])
-        assert r.status_code == 200 and r.json()["trir_limit"] == 3.0
-        assert client.get("/settings/safety-targets", headers=auth["mgr"]).json()["trir_limit"] == 3.0
+        r = client.put("/settings/safety-targets", json={"ltifr_limit": 3.0}, headers=auth["admin"])
+        assert r.status_code == 200 and r.json()["ltifr_limit"] == 3.0
+        assert client.get("/settings/safety-targets", headers=auth["mgr"]).json()["ltifr_limit"] == 3.0
 
         doc, rows = board()
-        assert rows["Targets Site"][9] == "Within limits"                      # the new limit is used by reports
-        assert "TRIR 3" in doc["notes"][0]
+        assert rows["Targets Site"][8] == "Within limits"                      # the new limit is used by reports
+        assert "LTIFR 3" in doc["notes"][0]
 
         db = SessionLocal()
         entry = db.query(AuditLog).filter(AuditLog.action == "UPDATE_SETTINGS").order_by(AuditLog.id.desc()).first()
         db.close()
-        assert "TRIR limit 1.5 -> 3" in entry.details
+        assert "LTIFR limit 0.5 -> 3" in entry.details
     finally:
         db = SessionLocal()
         from models.incident import Incident as I

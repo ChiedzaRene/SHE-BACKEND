@@ -5,7 +5,7 @@ from database import Base
 
 
 class SiteHours(Base):
-    """Total hours worked at a site in one calendar month (the TRIR/LTIFR denominator)."""
+    """Total hours worked at a site in one calendar month (the LTIFR denominator)."""
 
     __tablename__ = "site_hours"
     __table_args__ = (UniqueConstraint("site_id", "period", name="uq_site_hours_site_period"),)
