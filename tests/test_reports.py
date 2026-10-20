@@ -10,7 +10,7 @@ from models.audit import Audit
 from models.audit_log import AuditLog
 from models.corrective_action import CorrectiveAction
 from models.incident import Incident
-from models.legal import Legal
+from models.site_licence import SiteLicence
 from models.site import Site
 from models.site_hours import SiteHours
 from models.training import Training
@@ -48,11 +48,9 @@ def report_data(client):
     db.add(CorrectiveAction(site_id=70, assigned_to="Rudo", action_taken="Signage", status="resolved"))
     db.add(Audit(site_id=70, user_id=1, criteria="Fire safety", score=80, status="open"))
     db.add(Audit(site_id=70, user_id=1, criteria="Spill kit", score=60, status="closed"))
-    db.add(Legal(site_id=70, user_id=1, requirements="EMA licence", status="compliant",
-                 expiry_date=datetime.now() + timedelta(days=20)))
-    db.add(Legal(site_id=70, user_id=1, requirements="Fire certificate", status="non_compliant"))
-    db.add(Legal(site_id=70, user_id=1, requirements="Fine licence", status="compliant",
-                 expiry_date=datetime.now() + timedelta(days=400)))
+    db.add(SiteLicence(site_id=70, licence_type="fire_brigade", created_by=1, expiry_date=date.today() + timedelta(days=20)))
+    db.add(SiteLicence(site_id=70, licence_type="ema_air", created_by=1, expiry_date=date.today() - timedelta(days=5)))
+    db.add(SiteLicence(site_id=70, licence_type="council_shop", created_by=1, expiry_date=date.today() + timedelta(days=400)))
     db.add(Training(site_id=70, user_id=1, training_module="Firefighting", personnel="All",
                     trained_employees=8, total_employees=10))
     db.commit()
@@ -60,7 +58,7 @@ def report_data(client):
     yield
     # The metrics tests assert exact global counts, so leave nothing behind
     db = SessionLocal()
-    for model in (Incident, CorrectiveAction, Audit, Legal, Training, SiteHours):
+    for model in (Incident, CorrectiveAction, Audit, SiteLicence, Training, SiteHours):
         db.query(model).filter(model.site_id.in_([70, 71])).delete(synchronize_session=False)
     db.query(User).filter(User.id == 70).delete(synchronize_session=False)
     db.query(Site).filter(Site.id.in_([70, 71])).delete(synchronize_session=False)
@@ -87,7 +85,7 @@ def test_performance_report_numbers(client, auth):
     doc = r.json()
     k = kpis(doc)
     # 2 recordable injuries in the month (the old one is another month); 1 lost-time; 50,000 hours
-    assert k["TRIR (month)"] == "8.00"           # 2 * 200000 / 50000
+    assert not any("TRIR" in label for label in k)
     assert k["LTIFR (month)"] == "4.00"          # 1 * 200000 / 50000
     assert k["Hours worked"] == "50,000"
     assert k["Incidents logged"] == "3"          # 2 injuries + spill
@@ -100,7 +98,7 @@ def test_performance_report_numbers(client, auth):
 def test_month_without_hours_is_na(client, auth):
     prior = (MONTH_START - timedelta(days=1)).strftime("%Y-%m")
     doc = client.get(f"/reports/performance?site_id=70&month={prior}", headers=auth["she"]).json()
-    assert kpis(doc)["TRIR (month)"] == "N/A"
+    assert kpis(doc)["LTIFR (month)"] == "N/A"
     assert any("No hours" in n for n in doc["notes"])
 
 
@@ -136,11 +134,16 @@ def test_compliance_report(client, auth):
     doc = client.get("/reports/compliance?site_id=70", headers=auth["she"]).json()
     k = kpis(doc)
     assert k["Audits on record"] == "2" and k["Average audit score"] == "70.0" and k["Open audits"] == "1"
-    assert k["Legal: expired / non-compliant"] == "1"
-    assert k["Legal: expiring in 60 days"] == "1"
+    assert k["Licences: expired / not recorded"] == "4"   # air emission expired; three types not recorded
+    assert k["Licences: due within 3 months"] == "1"
     assert k["Training coverage"] == "80%"
-    attention = {row[1] for row in table(doc, "Legal records needing attention")["rows"]}
-    assert attention == {"Fire certificate", "EMA licence"}  # the licence 400 days out is fine
+    rows = table(doc, "Licences needing attention")["rows"]
+    attention = {row[1]: row[2] for row in rows}
+    assert attention["EMA air emission licence"] == "Expired"
+    assert attention["Fire brigade licence"] == "Due within a month"
+    assert attention["Council trade effluent licence"] == "Not recorded"
+    assert "Council shop licence" not in attention       # due in 400 days: fine
+    assert rows[0][1] == "EMA air emission licence"         # most overdue first
 
 
 def test_incident_register_filters(client, auth):
@@ -159,10 +162,11 @@ def test_incident_register_filters(client, auth):
 
 def test_leaderboard_ranking_puts_no_data_sites_last(client, auth):
     doc = client.get("/reports/leaderboard?period=ytd", headers=auth["she"]).json()
-    rows = table(doc, "Ranked by TRIR (lowest first)")["rows"]
+    rows = table(doc, "Ranked by LTIFR (lowest first)")["rows"]
+    assert "TRIR" not in str(doc)
     status = {r[1]: r for r in rows}
     assert status["Report Site B"][5] == "N/A" and status["Report Site B"][0] == ""   # unranked
-    assert status["Report Site B"][9] == "No hours data"
+    assert status["Report Site B"][8] == "No hours data"
     ranked = [r[0] for r in rows if r[0] != ""]
     assert ranked == sorted(ranked)
     na_positions = [i for i, r in enumerate(rows) if r[5] == "N/A"]

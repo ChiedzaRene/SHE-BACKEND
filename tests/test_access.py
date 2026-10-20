@@ -22,20 +22,11 @@ def test_admin_cannot_demote_or_delete_super_admin(client, auth):
     assert client.delete("/users/1", headers=auth["admin"]).status_code == 403
 
 
-def test_scorecard_requires_login(client):
-    assert client.get("/scorecard/").status_code == 401
-    assert client.post("/scorecard/", json={"site_id": 1, "items": ITEMS}).status_code == 401
-    assert client.delete("/scorecard/1").status_code == 401
-
-
-def test_site_manager_scorecard_scoping(client, auth):
-    mgr = auth["mgr"]
-    assert client.post("/scorecard/", json={"site_id": 1, "items": ITEMS}, headers=mgr).status_code == 201
-    assert client.post("/scorecard/", json={"site_id": 2, "items": ITEMS}, headers=mgr).status_code == 403
-    assert client.get("/scorecard/site/1/latest", headers=mgr).status_code == 200
-    assert client.get("/scorecard/site/2/latest", headers=mgr).status_code == 403
-    assert client.get("/scorecard/", headers=mgr).status_code == 200
-    assert client.delete("/scorecard/1", headers=mgr).status_code == 403
+def test_legal_compliance_scorecard_and_records_are_gone(client, auth):
+    # the Legal page is the licence register now; the old scorecard and legal records can't be used
+    for path in ("/scorecard/", "/scorecard/site/1/latest", "/legal/"):
+        assert client.get(path, headers=auth["admin"]).status_code == 404
+    assert client.post("/scorecard/", json={"site_id": 1, "items": ITEMS}, headers=auth["mgr"]).status_code in (404, 405)
 
 
 def test_site_manager_cannot_read_other_site_incident_metrics(client, auth):

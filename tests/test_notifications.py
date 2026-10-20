@@ -182,7 +182,7 @@ def test_injuries_in_months_without_hours_are_reported_not_hidden():
     db.commit()
     try:
         stats = compute_range(db, [2], date(2020, 1, 1), date(2020, 3, 1))[2]
-        assert stats["hours_reported"] and stats["trir"] == 0.0     # January has hours, no injuries
+        assert stats["hours_reported"] and stats["ltifr"] == 0.0    # January has hours, no injuries
         assert stats["uncounted_injuries"] == 1                     # the February injury has no hours yet
         assert stats["months_missing_hours"] == ["2020-02"]
     finally:

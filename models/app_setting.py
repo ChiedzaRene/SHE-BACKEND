@@ -5,7 +5,7 @@ from database import Base
 
 
 class AppSetting(Base):
-    """Small key/value store for admin-editable settings (e.g. the TRIR/LTIFR warning limits)."""
+    """Small key/value store for admin-editable settings (e.g. the LTIFR warning limit)."""
 
     __tablename__ = "app_settings"
 

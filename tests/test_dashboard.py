@@ -37,7 +37,7 @@ def two_sites():
     db.add_all([
         SiteHours(site_id=501, period=date(2026, 7, 1), hours_worked=100000, workers=40, entered_by=1),
         SiteHours(site_id=502, period=date(2026, 7, 1), hours_worked=50000, workers=25, entered_by=1),
-        # A: 1 injury (lost time) -> TRIR 2.0, LTIFR 2.0 ; B: 2 injuries -> TRIR 8.0, LTIFR 0
+        # A: 1 injury (lost time) -> LTIFR 2.0 ; B: 2 injuries, no lost time -> LTIFR 0
         Incident(site_id=501, user_id=1, type="injury", description="d", severity="low", lost_time_days=2, occurred_at=july),
         Incident(site_id=502, user_id=1, type="injury", description="d", severity="low", lost_time_days=0, occurred_at=july),
         Incident(site_id=502, user_id=1, type="Injury", description="d", severity="low", lost_time_days=0, occurred_at=july),
@@ -62,10 +62,10 @@ def two_sites():
 def test_each_site_has_its_own_rates_and_all_sites_is_their_average(two_sites):
     s = summarise(two_sites, [501, 502], date(2026, 7, 1), date(2026, 8, 1), TODAY)
     rows = {r["site_id"]: r for r in s["sites"]}
-    assert (rows[501]["trir"], rows[501]["ltifr"]) == (2.0, 2.0)
-    assert (rows[502]["trir"], rows[502]["ltifr"]) == (8.0, 0.0)
+    assert (rows[501]["ltifr"], rows[502]["ltifr"]) == (2.0, 0.0)
+    assert "trir" not in rows[501]
     t = s["totals"]
-    assert t["trir"] == 5.0 and t["ltifr"] == 1.0            # (2+8)/2 and (2+0)/2, not pooled
+    assert t["ltifr"] == 1.0 and "trir" not in t             # (2+0)/2, not pooled
     assert t["hours_worked"] == 150000 and t["workers"] == 65
     assert t["incidents"] == 3 and t["injuries"] == 3 and t["lost_time_injuries"] == 1
     assert s["label"] == "July 2026"

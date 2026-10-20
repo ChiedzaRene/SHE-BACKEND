@@ -159,7 +159,6 @@ def summarise(db: Session, site_ids: List[int], start: date, end: date, today: O
             "lost_time_injuries": r.get("lost_time_injuries", 0),
             "hours_worked": r.get("hours_worked", 0.0),
             "workers": workers.get(sid),
-            "trir": r.get("trir"),
             "ltifr": r.get("ltifr"),
             "uncounted_injuries": r.get("uncounted_injuries", 0),
             "months_missing_hours": r.get("months_missing_hours", []),
@@ -190,7 +189,6 @@ def summarise(db: Session, site_ids: List[int], start: date, end: date, today: O
             "workers": sum(r["workers"] for r in rows if r["workers"] is not None) if any(
                 r["workers"] is not None for r in rows) else None,
             # average of the sites' own rates (sites without hours left out)
-            "trir": _avg(r["trir"] for r in rows),
             "ltifr": _avg(r["ltifr"] for r in rows),
             "sites_with_hours": len(reported),
             "sites": len(rows),

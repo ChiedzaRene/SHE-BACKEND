@@ -63,7 +63,7 @@ def get_incident_summary(
     }
 
 
-# Per-site rates (TRIR / LTIFR) for the dashboards: one query instead of downloading every incident
+# Per-site rates (LTIFR) for the dashboards: one query instead of downloading every incident
 @router.get("/metrics/by-site")
 def get_metrics_by_site(
     period: str = PeriodQuery,

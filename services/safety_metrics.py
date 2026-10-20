@@ -1,9 +1,8 @@
-"""TRIR / LTIFR calculation. The single source of truth: every endpoint uses this.
+"""LTIFR calculation. The single source of truth: every endpoint uses this.
 
 Definitions (ISO 45001 style reporting, 200,000-hour basis):
   * Recordable incident   = an incident of type "injury"
   * Lost-time injury      = a recordable incident with lost_time_days > 0
-  * TRIR  = recordable incidents  x 200,000 / hours worked
   * LTIFR = lost-time injuries    x 200,000 / hours worked
 
 Hours worked come from the monthly `site_hours` entries. Only months with hours entered
@@ -21,7 +20,6 @@ from models.site_hours import SiteHours
 
 RATE_BASIS_HOURS = 200_000
 # Warning thresholds per 200,000 hours (the dashboards and reports flag sites above these)
-TRIR_LIMIT = 1.5
 LTIFR_LIMIT = 0.5
 PERIODS = ("12m", "ytd")
 
@@ -60,7 +58,6 @@ def _empty() -> dict:
 def _finish(stats: dict) -> dict:
     stats["months_missing_hours"] = sorted(stats["months_missing_hours"])
     stats["hours_reported"] = stats["hours_worked"] > 0
-    stats["trir"] = _rate(stats["recordable_incidents"], stats["hours_worked"])
     stats["ltifr"] = _rate(stats["lost_time_injuries"], stats["hours_worked"])
     return stats
 
