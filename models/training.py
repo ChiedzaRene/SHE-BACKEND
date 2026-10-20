@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, LargeBinary, String, ForeignKey, DateTime
+from sqlalchemy.orm import deferred, relationship
 from sqlalchemy.sql import func
 from database import Base
 
@@ -18,6 +18,11 @@ class Training(Base):
     date = Column(DateTime, server_default=func.now())
     type = Column(String, nullable=True)
     comments = Column(String, nullable=True)
+    # supporting document (attendance register, certificate, slides...), kept in the database
+    document_name = Column(String(255), nullable=True)
+    document_type = Column(String(120), nullable=True)
+    document_size = Column(Integer, nullable=True)
+    document = deferred(Column(LargeBinary, nullable=True))
 
     site = relationship("Site")
     trainer = relationship("User")

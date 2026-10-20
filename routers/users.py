@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,7 +10,11 @@ from models.incident import Incident
 from models.inspections import Inspection
 from models.legal import Legal
 from models.notification import Notification
+from models.safety_talk import SafetyTalk
 from models.scorecard import Scorecard
+from models.site import Site
+from models.site_inspection import SiteInspection
+from models.she_file import SheFile
 from models.site_hours import SiteHours
 from models.training import Training
 from models.user import User
@@ -84,6 +88,19 @@ def get_user(
     return user
 
 
+def _check_region(db: Session, role: str, region: Optional[str]) -> Optional[str]:
+    """Regional managers need a region that sites use; nobody else has one."""
+    if role != "regional_manager":
+        return None
+    region = " ".join((region or "").split())
+    if not region:
+        raise HTTPException(status_code=422, detail="Choose the region this regional manager looks after.")
+    known = {r for (r,) in db.query(Site.region).filter(Site.region.isnot(None)).all()}
+    if region not in known:
+        raise HTTPException(status_code=422, detail=f"No site is in the region \"{region}\". Set the region on the sites first.")
+    return region
+
+
 # Create new user (admin only)
 @router.post("/", response_model=UserResponse)
 def create_user(
@@ -98,6 +115,7 @@ def create_user(
     existing_user = db.query(User).filter(User.email == user.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
+    region = _check_region(db, user.role, user.region)
 
     new_user = User(
         email=user.email,
@@ -105,6 +123,7 @@ def create_user(
         full_name=user.full_name,
         role=user.role,
         site_id=user.site_id,
+        region=region,
         must_change_password=True,  # temporary password: the user chooses their own at first sign-in
     )
     db.add(new_user)
@@ -158,6 +177,8 @@ def update_user(
         user.role = user_data.role
     if user_data.site_id is not None:
         user.site_id = user_data.site_id
+    if user_data.role is not None or user_data.region is not None:
+        user.region = _check_region(db, user.role, user_data.region if user_data.region is not None else user.region)
     if user_data.is_active is not None:
         user.is_active = user_data.is_active
     was_reset = bool(user_data.password) and reset_by_admin(db, user, current_user, user_data.password)
@@ -201,6 +222,9 @@ RECORDS_BY_USER = [
     ("training record", "training records", Training.user_id),
     ("scorecard", "scorecards", Scorecard.submitted_by),
     ("hours entry", "hours entries", SiteHours.entered_by),
+    ("shared SHE file", "shared SHE files", SheFile.uploaded_by),
+    ("toolbox talk", "toolbox talks", SafetyTalk.submitted_by),
+    ("inspection report", "inspection reports", SiteInspection.created_by),
 ]
 
 

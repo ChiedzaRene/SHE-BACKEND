@@ -24,6 +24,9 @@ from models.site_hours import SiteHours
 from models.app_setting import AppSetting
 from models.audit_log import AuditLog
 from models.notification import Notification  # noqa: F401
+from models.she_file import SheFile  # noqa: F401
+from models.safety_talk import SafetyTalk, SafetyTalkMiss  # noqa: F401
+from models.site_inspection import SiteInspection, InspectionNC, InspectionPhoto  # noqa: F401
 
 from routers import (
     auth, scorecard, sites, incidents, audits, 
@@ -32,6 +35,10 @@ from routers import (
 from routers.inspections import router as inspections, uploads_router
 from routers.audit_log import router as audit_log_router
 from routers.notifications import router as notifications_router
+from routers.dashboard import router as dashboard_router
+from routers.she_files import router as she_files_router
+from routers.safety_talks import router as safety_talks_router
+from routers.site_inspections import router as site_inspections_router
 
 # Optional error monitoring: enabled only when SENTRY_DSN is set and sentry-sdk is installed
 if os.getenv("SENTRY_DSN"):
@@ -179,6 +186,7 @@ prepare_database()
 def _purge_audit_logs() -> None:
     from database import SessionLocal
     from services.retention import purge_old_audit_logs, purge_old_notifications
+    from services.safety_talks import record_missed
 
     db = SessionLocal()
     try:
@@ -186,6 +194,11 @@ def _purge_audit_logs() -> None:
         purge_old_notifications(db)
     except Exception:
         logging.getLogger("she_portal").exception("Audit log retention failed")
+    try:
+        record_missed(db)  # weekly talks whose window has closed: tell the SHE team
+    except Exception:
+        db.rollback()
+        logging.getLogger("she_portal").exception("Checking for missed toolbox talks failed")
     finally:
         db.close()
 
@@ -197,7 +210,7 @@ async def _daily_housekeeping():
     async def loop():
         while True:
             await asyncio.to_thread(_purge_audit_logs)
-            await asyncio.sleep(3600)  # hourly: opened notifications go 24 hours after opening
+            await asyncio.sleep(3600)  # hourly: opened notifications go 24 hours after opening; missed talks
 
     app.state.housekeeping = asyncio.create_task(loop())
 
@@ -220,6 +233,10 @@ app.include_router(site_hours.router)
 app.include_router(reports.router)
 app.include_router(settings.router)
 app.include_router(notifications_router)
+app.include_router(dashboard_router)
+app.include_router(she_files_router)
+app.include_router(safety_talks_router)
+app.include_router(site_inspections_router)
 
 @app.get("/")
 def root():

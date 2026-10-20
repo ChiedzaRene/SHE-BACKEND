@@ -82,7 +82,7 @@ def test_migration_adds_columns_to_an_old_users_table_and_is_idempotent(tmp_path
     with engine.begin() as c:   # the users table as it was before this feature
         c.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password TEXT, role TEXT)"))
         c.execute(text("INSERT INTO users (email, password, role) VALUES ('old@x.com', 'h', 'admin')"))
-    assert ensure_new_columns(engine) == ["users.must_change_password", "users.token_version"]
+    assert ensure_new_columns(engine) == ["users.must_change_password", "users.token_version", "users.region"]
     assert ensure_new_columns(engine) == []                       # second run changes nothing
     cols = {c["name"] for c in inspect(engine).get_columns("users")}
     assert {"must_change_password", "token_version"} <= cols

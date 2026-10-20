@@ -24,16 +24,21 @@ def test_no_hours_means_no_rate_not_a_fake_one(client, auth):
     assert g["trir"] is None and g["ltifr"] is None
 
 
-def test_only_she_team_and_admins_can_enter_hours(client, auth):
-    body = {"site_id": 1, "month": _this_month(), "hours_worked": 100000}
+def test_hours_are_entered_by_the_sites_manager_and_read_only_for_she(client, auth):
+    body = {"site_id": 1, "month": _this_month(), "hours_worked": 100000, "workers": 42}
     assert client.put("/site-hours/", json=body).status_code == 401
-    assert client.put("/site-hours/", json=body, headers=auth["mgr"]).status_code == 403
-    assert client.put("/site-hours/", json=body, headers=auth["she"]).status_code == 200
+    assert client.put("/site-hours/", json=body, headers=auth["she"]).status_code == 403          # SHE can't change them
+    other = client.put("/site-hours/", json={**body, "site_id": 2}, headers=auth["mgr"])
+    assert other.status_code == 403 and "own site" in other.json()["detail"]                        # not another site
+    saved = client.put("/site-hours/", json=body, headers=auth["mgr"])                               # the manager's own site
+    assert saved.status_code == 200 and saved.json()["workers"] == 42
+    assert client.get("/site-hours/?site_id=1", headers=auth["she"]).json()[0]["workers"] == 42     # SHE sees them
 
 
 def test_hours_validation(client, auth):
-    she = auth["she"]
+    she = auth["admin"]  # admins can correct any site
     ok = {"site_id": 1, "month": _this_month(), "hours_worked": 1}
+    assert client.put("/site-hours/", json={**ok, "workers": -1}, headers=she).status_code == 422
     assert client.put("/site-hours/", json={**ok, "month": "2026-13"}, headers=she).status_code == 422
     assert client.put("/site-hours/", json={**ok, "hours_worked": -5}, headers=she).status_code == 422
     assert client.put("/site-hours/", json={**ok, "month": "2099-01"}, headers=she).status_code == 400
@@ -61,9 +66,10 @@ def test_site_without_hours_is_excluded_from_global_rate(client, auth):
 
 def test_updating_hours_replaces_the_month(client, auth):
     body = {"site_id": 1, "month": _this_month(), "hours_worked": 200000}
-    assert client.put("/site-hours/", json=body, headers=auth["she"]).status_code == 200
+    assert client.put("/site-hours/", json=body, headers=auth["mgr"]).status_code == 200
     rows = client.get("/site-hours/?site_id=1", headers=auth["she"]).json()
     assert len(rows) == 1 and rows[0]["hours_worked"] == 200000
+    assert rows[0]["workers"] == 42  # leaving workers out keeps the headcount already entered
     assert client.get("/incidents/metrics/1", headers=auth["admin"]).json()["trir"] == 3.0
 
 

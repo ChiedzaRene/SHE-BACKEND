@@ -22,5 +22,7 @@ class CorrectiveAction(Base):
     resolution_notes = Column(Text, nullable=True)
     resolved_by = Column(String, nullable=True)
     is_successful = Column(String, nullable=True)  # "yes" | "no"
+    # set when the action was opened for an inspection non-conformity (managed from the inspection)
+    nc_id = Column(Integer, nullable=True, index=True)
 
     incident = relationship("Incident", back_populates="corrective_actions")

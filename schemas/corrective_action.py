@@ -133,6 +133,8 @@ class CorrectiveActionResponse(BaseModel):
     resolution_notes: Optional[str] = None
     resolved_by: Optional[str] = None
     is_successful: Optional[str] = None
+    nc_id: Optional[int] = None
+    inspection_id: Optional[int] = None
 
     class Config:
         from_attributes = True

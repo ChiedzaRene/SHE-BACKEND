@@ -55,6 +55,7 @@ def issue_token(user: User) -> str:
         "role": user.role,
         "user_id": user.id,
         "site_id": user.site_id,
+        "region": user.region,
         "tv": user.token_version or 0,
         "mcp": bool(user.must_change_password),
     })

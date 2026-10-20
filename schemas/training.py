@@ -74,6 +74,11 @@ class TrainingResponse(BaseModel):
     date: Optional[datetime] = None
     type: Optional[str] = None
     comments: Optional[str] = None
+    document_name: Optional[str] = None
+    document_type: Optional[str] = None
+    document_size: Optional[int] = None
+    has_document: bool = False
+    document_viewable: bool = False
 
     class Config:
         from_attributes = True

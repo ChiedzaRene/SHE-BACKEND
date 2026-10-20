@@ -9,9 +9,11 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     password = Column(String, nullable=False)
     full_name = Column(String, nullable=True)
-    role = Column(String, nullable=False)  # "admin", "she_team", "site_manager"
+    role = Column(String, nullable=False)  # "super_admin", "admin", "she_team", "regional_manager", "site_manager"
     is_active = Column(Boolean, default=True, server_default='true', nullable=False)
     site_id = Column(Integer, ForeignKey("sites.id"), nullable=True)
+    # regional managers look after every site in their region (sites.region)
+    region = Column(String(100), nullable=True)
     # Set when an admin creates the account or resets the password: the user must choose their own
     # password before the API lets them do anything else.
     must_change_password = Column(Boolean, default=False, server_default="false", nullable=False)

@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.corrective_action import CorrectiveAction
+from models.site import Site
+from models.site_inspection import InspectionNC
 from models.user import User
 from schemas.corrective_action import (
     CorrectiveActionCreate,
@@ -42,6 +44,15 @@ def _notify_assignee(db: Session, action: CorrectiveAction, actor: User) -> None
     )
 
 
+def _not_from_inspection(action: CorrectiveAction) -> None:
+    """Actions opened for an inspection NC are completed and closed from the inspection report."""
+    if action.nc_id:
+        raise HTTPException(
+            status_code=409,
+            detail="This action belongs to an inspection non-conformity. Complete or review it from the inspection report.",
+        )
+
+
 def _to_response(action: CorrectiveAction) -> dict:
     return {
         "id": action.id,
@@ -59,6 +70,7 @@ def _to_response(action: CorrectiveAction) -> dict:
         "resolution_notes": action.resolution_notes,
         "resolved_by": action.resolved_by,
         "is_successful": action.is_successful,
+        "nc_id": action.nc_id,
     }
 
 
@@ -72,8 +84,15 @@ def get_all_corrective_actions(
     query = db.query(CorrectiveAction)
     if current_user.role == "site_manager":
         query = query.filter(CorrectiveAction.site_id == current_user.site_id)
+    elif current_user.role == "regional_manager":  # the sites in their region
+        region_sites = [sid for (sid,) in db.query(Site.id).filter(Site.region == current_user.region).all()]
+        query = query.filter(CorrectiveAction.site_id.in_(region_sites or [0]))
     actions = page.apply(query, response, CorrectiveAction.id.desc()).all()
-    return [_to_response(action) for action in actions]
+    # actions opened for inspection NCs link back to their report
+    nc_ids = [a.nc_id for a in actions if a.nc_id]
+    reports = dict(db.query(InspectionNC.id, InspectionNC.inspection_id).filter(InspectionNC.id.in_(nc_ids)).all()) \
+        if nc_ids else {}
+    return [{**_to_response(action), "inspection_id": reports.get(action.nc_id)} for action in actions]
 
 
 @router.get("/incident/{incident_id}", response_model=List[CorrectiveActionResponse])
@@ -158,6 +177,7 @@ def resolve_corrective_action(
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
     assert_site_access(current_user, action.site_id)
+    _not_from_inspection(action)
 
     action.resolution_notes = resolve_data.resolution_notes
     action.is_successful = resolve_data.is_successful
@@ -200,6 +220,7 @@ def update_corrective_action(
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
     assert_site_access(current_user, action.site_id)
+    _not_from_inspection(action)
 
     updates = action_data.model_dump(exclude_unset=True)
     if "description" in updates and "action_taken" not in updates:
@@ -238,6 +259,7 @@ def delete_corrective_action(
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Corrective action not found")
+    _not_from_inspection(action)
 
     db.delete(action)
     db.commit()
