@@ -43,6 +43,9 @@ ACTION_LABELS = {
     "ACKNOWLEDGE_NC": "NC acknowledged and assigned",
     "COMPLETE_NC": "NC corrective action completed",
     "REVIEW_NC": "NC reviewed",
+    "RECORD_LICENCE": "Licence recorded",
+    "UPDATE_LICENCE": "Licence corrected",
+    "DELETE_LICENCE": "Licence deleted",
 }
 
 RESOURCE_LABELS = {
@@ -63,6 +66,7 @@ RESOURCE_LABELS = {
     "she_files": "SHE files",
     "safety_talks": "Toolbox talks",
     "site_inspections": "Inspections",
+    "licences": "Licences",
 }
 
 

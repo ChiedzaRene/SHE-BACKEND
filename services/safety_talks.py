@@ -76,7 +76,10 @@ def _mondays(start: date, end: date) -> List[date]:
 
 
 def site_start(site: Site, tracked_from: date) -> date:
-    return max(tracked_from, site.talks_from) if site.talks_from else tracked_from
+    """The first day whose Monday counts: a week counts if its window (Monday to Tuesday) was still open
+    when tracking began for the site, so a site added on a Tuesday is due that week's talk."""
+    start = max(tracked_from, site.talks_from) if site.talks_from else tracked_from
+    return start - timedelta(days=1)
 
 
 def weeks_status(db: Session, sites: Iterable[Site], start: date, end: date, today: date) -> Dict[int, dict]:
