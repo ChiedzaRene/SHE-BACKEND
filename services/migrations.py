@@ -50,6 +50,16 @@ NEW_COLUMNS = {
         ("document_size", "INTEGER"),
         ("document", {"postgresql": "BYTEA", "default": "BLOB"}),
     ],
+    # proof files attached to a whole inspection report (added after the table was first created)
+    "inspection_photos": [
+        ("inspection_id", "INTEGER REFERENCES site_inspections(id) ON DELETE CASCADE"),
+    ],
+}
+
+# Columns that were required when a table was first created and may now be empty. SQLite can't relax a
+# column in place, so this is only done on PostgreSQL (SQLite databases are only used for tests).
+NOW_OPTIONAL = {
+    "inspection_photos": ["nc_id"],   # a report's own proof files belong to no NC
 }
 
 
@@ -68,4 +78,14 @@ def ensure_new_columns(engine) -> list:
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                     added.append(f"{table}.{name}")
+    if engine.dialect.name == "postgresql":
+        for table, columns in NOW_OPTIONAL.items():
+            if not inspector.has_table(table):
+                continue
+            required = {c["name"] for c in inspector.get_columns(table) if not c.get("nullable", True)}
+            with ddl_transaction(engine) as connection:
+                for name in columns:
+                    if name in required:
+                        connection.execute(text(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL"))
+                        added.append(f"{table}.{name} (now optional)")
     return added
