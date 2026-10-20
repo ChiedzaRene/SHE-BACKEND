@@ -14,6 +14,7 @@ from models.safety_talk import SafetyTalk
 from models.scorecard import Scorecard
 from models.site import Site
 from models.site_inspection import SiteInspection
+from models.site_licence import SiteLicence
 from models.she_file import SheFile
 from models.site_hours import SiteHours
 from models.training import Training
@@ -225,6 +226,7 @@ RECORDS_BY_USER = [
     ("shared SHE file", "shared SHE files", SheFile.uploaded_by),
     ("toolbox talk", "toolbox talks", SafetyTalk.submitted_by),
     ("inspection report", "inspection reports", SiteInspection.created_by),
+    ("licence", "licences", SiteLicence.created_by),
 ]
 
 

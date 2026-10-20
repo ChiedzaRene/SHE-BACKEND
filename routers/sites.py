@@ -11,6 +11,7 @@ from models.inspections import Inspection
 from models.legal import Legal
 from models.safety_talk import SafetyTalk
 from models.site_inspection import SiteInspection
+from models.site_licence import SiteLicence
 from models.scorecard import Scorecard
 from models.site_hours import SiteHours
 from models.training import Training
@@ -131,6 +132,7 @@ def delete_site(
         "hours entries": SiteHours,
         "toolbox talks": SafetyTalk,
         "inspection reports": SiteInspection,
+        "licences": SiteLicence,
         "users": User,
     }
     in_use = [
