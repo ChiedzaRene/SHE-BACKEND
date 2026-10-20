@@ -173,3 +173,10 @@ def test_sites_have_a_region(client, auth):
     r = client.post("/sites/", json={"name": "Region Test", "address": "1 Road", "region": "  Masvingo  "},
                     headers=auth["admin"])
     assert r.status_code == 201 and r.json()["region"] == "Masvingo"
+
+
+def test_a_site_added_on_tuesday_counts_that_weeks_talk():
+    site = Site(id=77, name="Tuesday Site", address="x", talks_from=TUE)
+    assert svc.site_start(site, date(2026, 8, 31)) == MON
+    added_wednesday = Site(id=78, name="Wednesday Site", address="x", talks_from=WED)
+    assert svc.site_start(added_wednesday, date(2026, 8, 31)) == TUE   # this week's window had closed
