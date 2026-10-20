@@ -181,7 +181,17 @@ def update_incident(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     assert_site_access(current_user, incident.site_id)
-    for key, value in incident_data.model_dump(exclude_unset=True).items():
+    changes = incident_data.model_dump(exclude_unset=True)
+    # The description is the record of what happened: once logged it can't be rewritten
+    if "description" in changes and (changes["description"] or "").strip() != (incident.description or "").strip():
+        raise HTTPException(
+            status_code=409,
+            detail="An incident's description can't be changed once it is logged. Add to the action plan instead.",
+        )
+    changes.pop("description", None)
+    if "action_plan" in changes:
+        changes["action_plan"] = (changes["action_plan"] or "").strip() or None
+    for key, value in changes.items():
         setattr(incident, key, value)
     db.commit()
     db.refresh(incident)

@@ -16,7 +16,7 @@ from models.she_file import SheFile
 from models.site import Site
 from models.user import User
 from services.audit_service import log_action
-from services.auth_services import get_current_user, require_role
+from services.auth_services import OVERSIGHT_ROLES, get_current_user, require_role
 from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.notifications import notify, short, site_name, who
 
@@ -54,8 +54,8 @@ def _audience(f: SheFile) -> List[str]:
 
 
 def _can_see(user: User, f: SheFile) -> bool:
-    if f.uploaded_by == user.id or _is_admin(user):
-        return True  # admins oversee every shared file
+    if f.uploaded_by == user.id or _is_admin(user) or user.role in OVERSIGHT_ROLES:
+        return True  # admins, operations and directors oversee every shared file
     aud = _audience(f)
     if user.role == "she_team":
         return "she_team" in aud
