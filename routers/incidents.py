@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+import json
+from datetime import datetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from database import get_db
 from models.incident import Incident
+from models.incident_workflow import IncidentWorkflow
 from models.site import Site
 from models.user import User
 from schemas.incident import IncidentCreate, IncidentUpdate, IncidentResponse
@@ -17,10 +20,83 @@ from typing import List
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
 PeriodQuery = Query("12m", pattern="^(12m|ytd)$", description="Rolling 12 months or year to date")
+WORKFLOW_ROLES = {"super_admin", "admin", "she_team"}
+WORKFLOW_STAGES = ("reported", "assigned", "investigating", "causes_recorded", "closed", "report_finalised")
+REPORT_FINALISED = "report_finalised"
 
 
 def _metrics_response(stats: dict, scope: str, period: str) -> dict:
     return {"scope": scope, "period": period, **stats}
+
+
+def _is_fatal(incident: Incident) -> bool:
+    intake = incident.incident_intake or {}
+    values = intake.get("categories", intake.get("incident_categories", []))
+    if isinstance(values, str):
+        values = [values]
+    return incident.severity.lower() == "fatal" or any(str(value).lower() == "fatality" for value in values)
+
+
+def _validate_workflow(incident: Incident, workflow: IncidentWorkflow, changes: dict) -> None:
+    next_stage = changes.get("status")
+    if next_stage is None or next_stage == workflow.status:
+        return
+    expected = WORKFLOW_STAGES[WORKFLOW_STAGES.index(workflow.status) + 1] if workflow.status != REPORT_FINALISED else None
+    if next_stage != expected:
+        raise HTTPException(status_code=409, detail=f"Invalid workflow transition from {workflow.status} to {next_stage}")
+    if next_stage == "assigned" and not all((
+        changes.get("investigation_team", workflow.investigation_team),
+        changes.get("team_details", workflow.team_details),
+        changes.get("assignment_date", workflow.assignment_date),
+    )):
+        raise HTTPException(status_code=422, detail="Team members, team details and assignment date are required")
+    if next_stage in ("causes_recorded", "closed", REPORT_FINALISED):
+        causes = changes.get("causes", workflow.causes)
+        required = (
+            changes.get("evidence", workflow.evidence),
+            causes and len(causes) <= 3,
+            changes.get("root_cause", workflow.root_cause),
+            changes.get("corrective_action", workflow.corrective_action),
+            changes.get("lessons_learned", workflow.lessons_learned),
+        )
+        if not all(required):
+            raise HTTPException(status_code=422, detail="Evidence, up to three causes, root cause, corrective action and lessons learnt are required")
+    if next_stage == REPORT_FINALISED:
+        if not changes.get("report_type", workflow.report_type):
+            raise HTTPException(status_code=422, detail="report_type is required before finalisation")
+        if _is_fatal(incident) and not changes.get("operations_manager_comment", workflow.operations_manager_comment):
+            raise HTTPException(status_code=422, detail="Operations Manager comments are required for fatal incidents")
+
+
+def _apply_workflow(incident: Incident, workflow_data, user: User, request: Request, db: Session) -> None:
+    changes = workflow_data if isinstance(workflow_data, dict) else workflow_data.model_dump(exclude_unset=True)
+    if user.role == "operations":
+        if set(changes) != {"operations_manager_comment"} or not _is_fatal(incident):
+            raise HTTPException(status_code=403, detail="Operations Managers may only comment on fatal incidents")
+    elif user.role not in WORKFLOW_ROLES:
+        raise HTTPException(status_code=403, detail="Only SHE users may update the incident workflow")
+    workflow = incident._workflow
+    if workflow is None:
+        workflow = IncidentWorkflow(incident_id=incident.id)
+        db.add(workflow)
+        db.flush()
+    previous = workflow.status
+    if user.role != "operations":
+        _validate_workflow(incident, workflow, changes)
+    for key, value in changes.items():
+        setattr(workflow, key, value)
+    if changes.get("status") == "closed":
+        workflow.closed_at = datetime.utcnow()
+        workflow.closed_by_id = user.id
+        incident.resolved = True
+    if changes.get("status") == REPORT_FINALISED:
+        incident.resolved = True
+    db.commit()
+    db.refresh(workflow)
+    details = json.dumps({"previous_stage": previous, "new_stage": workflow.status,
+                          "changed_fields": sorted(changes)})
+    log_action(db=db, user=user, action="INCIDENT_WORKFLOW_CHANGED", resource="incidents",
+               resource_id=incident.id, details=details, ip_address=request.client.host)
 
 
 # Get all incidents
@@ -120,6 +196,24 @@ def get_site_incidents(
     assert_site_visible(db, current_user, site_id)
     return db.query(Incident).filter(Incident.site_id == site_id).all()
 
+@router.get("/{incident_id}/workflow-history")
+def get_workflow_history(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    assert_site_visible(db, current_user, incident.site_id)
+    from models.audit_log import AuditLog
+    return db.query(AuditLog).filter(
+        AuditLog.resource == "incidents",
+        AuditLog.resource_id == incident_id,
+        AuditLog.action == "INCIDENT_WORKFLOW_CHANGED",
+    ).order_by(AuditLog.timestamp.asc()).all()
+
+
 # Get one incident
 @router.get("/{incident_id}", response_model=IncidentResponse)
 def get_incident(
@@ -179,19 +273,25 @@ def update_incident(
     incident_id: int,
     incident_data: IncidentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     assert_site_visible(db, current_user, incident.site_id)
     changes = incident_data.model_dump(exclude_unset=True)
-    # The description is the record of what happened: once logged it can't be rewritten
+    workflow_data = changes.pop("incident_workflow", None)
+    intake = changes.pop("incident_intake", None)
+    if workflow_data is not None:
+        _apply_workflow(incident, workflow_data, current_user, request, db)
+    if current_user.role == "operations" and (intake is not None or changes):
+        raise HTTPException(status_code=403, detail="Operations Managers may only comment on fatal incidents")
+    if intake is not None:
+        if current_user.role != "site_manager" and current_user.role not in WORKFLOW_ROLES:
+            raise HTTPException(status_code=403, detail="You don't have permission to update incident intake")
+        incident.incident_intake = {**(incident.incident_intake or {}), **intake}
     if "description" in changes and (changes["description"] or "").strip() != (incident.description or "").strip():
-        raise HTTPException(
-            status_code=409,
-            detail="An incident's description can't be changed once it is logged. Add to the action plan instead.",
-        )
+        raise HTTPException(status_code=409, detail="An incident's description can't be changed once it is logged. Add to the action plan instead.")
     changes.pop("description", None)
     if "action_plan" in changes:
         changes["action_plan"] = (changes["action_plan"] or "").strip() or None
@@ -199,14 +299,9 @@ def update_incident(
         setattr(incident, key, value)
     db.commit()
     db.refresh(incident)
-
-    log_action(
-        db=db,
-        user=current_user,
-        action="UPDATE_INCIDENT",
-        resource="incidents",
-        resource_id=incident.id,
-        details=f"Updated incident #{incident.id}",
-        ip_address=request.client.host
-    )
+    if changes:
+        log_action(db=db, user=current_user, action="UPDATE_INCIDENT", resource="incidents",
+                   resource_id=incident.id, details=f"Updated incident #{incident.id}",
+                   ip_address=request.client.host)
     return incident
+

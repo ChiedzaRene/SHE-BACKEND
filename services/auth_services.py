@@ -114,8 +114,13 @@ def get_current_user(
     # existed carry no "tv" and count as version 0, so deploying it does not sign anyone out.
     if payload.get("tv", 0) != (user.token_version or 0):
         raise credentials_exception
+    operations_workflow_comment = (
+        user.role == "operations" and request.method == "PUT"
+        and request.url.path.startswith("/incidents/")
+    )
     if (user.role in READ_ONLY_ROLES and request.method not in ("GET", "HEAD", "OPTIONS")
-            and request.url.path.rstrip("/") not in READ_ONLY_MAY_WRITE):
+            and request.url.path.rstrip("/") not in READ_ONLY_MAY_WRITE
+            and not operations_workflow_comment):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account can view records but not change them.",
