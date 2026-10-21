@@ -212,3 +212,57 @@ def test_regional_managers_need_a_known_region(client, people):
 def test_site_code_is_saved_upper_case(client, people):
     r = client.post("/sites/", json={"name": "Code Test", "address": "1 Rd", "code": "ctr"}, headers=people["admin"])
     assert r.status_code == 201 and r.json()["code"] == "CTR"
+
+
+def test_a_regional_manager_sees_their_regions_incidents_trainings_talks_and_files(client, people):
+    from models.incident import Incident
+    from models.she_file import SheFile
+    from models.training import Training
+    db = SessionLocal()
+    db.add_all([
+        Incident(id=901, site_id=1, user_id=1, type="spill", description="Harare spill", severity="low"),
+        Incident(id=902, site_id=2, user_id=1, type="spill", description="Bulawayo spill", severity="low"),
+        Training(id=901, site_id=1, user_id=1, training_module="Harare drill", personnel="All"),
+        Training(id=902, site_id=2, user_id=1, training_module="Bulawayo drill", personnel="All"),
+    ])
+    db.commit()
+    db.close()
+    try:
+        reg = people["regional"]
+        incidents = {i["id"] for i in client.get("/incidents/", headers=reg).json()}
+        assert 901 in incidents and 902 not in incidents
+        assert client.get("/incidents/902", headers=reg).status_code == 403
+        assert client.get("/incidents/901", headers=reg).status_code == 200
+        trainings = {t["id"] for t in client.get("/trainings/", headers=reg).json()}
+        assert 901 in trainings and 902 not in trainings
+        assert client.get("/trainings/902", headers=reg).status_code == 403
+        talks = client.get("/safety-talks/overview", headers=reg).json()
+        assert {s["site_id"] for s in talks["sites"]} == {1} and talks["regions"] == ["Harare"]
+        # the all-sites dashboard and the reports are open to them
+        assert client.get("/dashboard/summary", headers=reg).status_code == 200
+        assert client.get("/reports/leaderboard", headers=reg).status_code == 200
+
+        # SHE files can be sent to regional managers: to all of them, or to one site's regional office
+        def share(title, audience, site_id=None):
+            data = {"title": title, "audience": audience}
+            if site_id:
+                data["site_id"] = str(site_id)
+            r = client.post("/she-files/", data=data, files={"file": ("note.pdf", b"%PDF-1.4 test", "application/pdf")},
+                            headers=people["she"])
+            assert r.status_code == 201, r.text
+            return r.json()["id"]
+        everyone = share("For every region", "regional_manager")
+        harare = share("For CBD only", "regional_manager", 1)
+        managers_only = share("Managers only", "site_manager")
+        seen = {f["id"] for f in client.get("/she-files/", headers=reg).json()}
+        assert {everyone, harare} <= seen and managers_only not in seen
+        other = {f["id"] for f in client.get("/she-files/", headers=people["other_region"]).json()}
+        assert everyone in other and harare not in other
+        assert client.get(f"/she-files/{harare}/view", headers=people["other_region"]).status_code == 404
+    finally:
+        db = SessionLocal()
+        db.query(Incident).filter(Incident.id.in_([901, 902])).delete(synchronize_session=False)
+        db.query(Training).filter(Training.id.in_([901, 902])).delete(synchronize_session=False)
+        db.query(SheFile).filter(SheFile.title.in_(["For every region", "For CBD only", "Managers only"])).delete(synchronize_session=False)
+        db.commit()
+        db.close()

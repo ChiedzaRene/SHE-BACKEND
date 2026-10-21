@@ -12,7 +12,7 @@ from services.clock import local_today
 from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.notifications import notify, short, site_managers, site_name, who
 from services.audit_service import log_action
-from services.access import assert_site_access
+from services.access import assert_site_access, assert_site_visible, region_site_ids
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 
@@ -36,6 +36,9 @@ def get_all_trainings(
     query = db.query(Training)
     if current_user.role == "site_manager":
         query = query.filter(Training.site_id == current_user.site_id)
+    mine = region_site_ids(db, current_user)
+    if mine is not None:  # a regional manager sees the trainings at the sites in their region
+        query = query.filter(Training.site_id.in_(mine or [0]))
     query = query.order_by(Training.date.desc(), Training.id.desc())  # newest first
     return [_out(t) for t in page.apply(query, response).all()]
 
@@ -46,7 +49,7 @@ def get_site_trainings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    assert_site_access(current_user, site_id)
+    assert_site_visible(db, current_user, site_id)
     return [_out(t) for t in db.query(Training).filter(Training.site_id == site_id).order_by(Training.date.desc()).all()]
 
 
@@ -59,7 +62,7 @@ def get_training(
     training = db.query(Training).filter(Training.id == training_id).first()
     if not training:
         raise HTTPException(status_code=404, detail="Training not found")
-    assert_site_access(current_user, training.site_id)
+    assert_site_visible(db, current_user, training.site_id)
     return _out(training)
 
 
@@ -113,7 +116,7 @@ def _with_document(db: Session, user: User, training_id: int) -> Training:
     training = db.query(Training).options(undefer(Training.document)).filter(Training.id == training_id).first()
     if not training:
         raise HTTPException(status_code=404, detail="Training not found")
-    assert_site_access(user, training.site_id)
+    assert_site_visible(db, user, training.site_id)
     if not training.document_name or training.document is None:
         raise HTTPException(status_code=404, detail="This training has no document")
     return training

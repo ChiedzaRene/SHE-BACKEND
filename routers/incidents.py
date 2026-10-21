@@ -6,7 +6,7 @@ from models.incident import Incident
 from models.site import Site
 from models.user import User
 from schemas.incident import IncidentCreate, IncidentUpdate, IncidentResponse
-from services.access import assert_site_access
+from services.access import assert_site_access, assert_site_visible, region_site_ids
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 from services.audit_service import log_action
@@ -34,6 +34,9 @@ def get_all_incidents(
     query = db.query(Incident)
     if current_user.role == "site_manager":
         query = query.filter(Incident.site_id == current_user.site_id)
+    mine = region_site_ids(db, current_user)
+    if mine is not None:  # a regional manager sees the incidents at the sites in their region
+        query = query.filter(Incident.site_id.in_(mine or [0]))
     return page.apply(query, response, Incident.id.desc()).all()
 
 # Totals for the dashboards (how many, how many still open, split by type) without sending every incident
@@ -114,7 +117,7 @@ def get_site_incidents(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    assert_site_access(current_user, site_id)
+    assert_site_visible(db, current_user, site_id)
     return db.query(Incident).filter(Incident.site_id == site_id).all()
 
 # Get one incident
@@ -127,7 +130,7 @@ def get_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    assert_site_access(current_user, incident.site_id)
+    assert_site_visible(db, current_user, incident.site_id)
     return incident
 
 # Create incident
@@ -140,6 +143,7 @@ def create_incident(
 ):
     if current_user.role == "site_manager" and incident_data.site_id != current_user.site_id:
         raise HTTPException(status_code=403, detail="Cannot log incidents for another site")
+    assert_site_visible(db, current_user, incident_data.site_id)
     new_incident = Incident(
         **incident_data.model_dump(),
         user_id=current_user.id
@@ -180,7 +184,7 @@ def update_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    assert_site_access(current_user, incident.site_id)
+    assert_site_visible(db, current_user, incident.site_id)
     changes = incident_data.model_dump(exclude_unset=True)
     # The description is the record of what happened: once logged it can't be rewritten
     if "description" in changes and (changes["description"] or "").strip() != (incident.description or "").strip():
