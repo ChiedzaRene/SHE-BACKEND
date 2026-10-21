@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -16,11 +16,14 @@ from models.scorecard import Scorecard
 from models.site_hours import SiteHours
 from models.training import Training
 from models.user import User
+from pydantic import BaseModel, Field
+
 from schemas.site import SiteCreate, SiteOut
 from services.audit_service import log_action
 from services.access import assert_site_access
 from services.auth_services import get_current_user, require_role
 from services.clock import local_today
+from services.regions import REGIONS, canonical, choose_message
 
 router = APIRouter(prefix="/sites", tags=["Sites"])
 
@@ -34,6 +37,65 @@ def get_all_sites(
     if current_user.role == "site_manager":
         return db.query(Site).filter(Site.id == current_user.site_id).all()
     return db.query(Site).order_by(Site.name).all()
+
+
+def _region(value, current=None):
+    """A site's region must be one of the regions (or none); a region set before the list existed may stay."""
+    if not value:
+        return None
+    if current and value == current:
+        return value
+    region = canonical(value)
+    if not region:
+        raise HTTPException(status_code=422, detail=choose_message())
+    return region
+
+
+@router.get("/regions")
+def list_regions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Every region with its regional manager(s) and how many sites are in it."""
+    counts = {}
+    for (region,) in db.query(Site.region).all():
+        counts[region] = counts.get(region, 0) + 1
+    managers = {}
+    for u in db.query(User).filter(User.role == "regional_manager", User.is_active.is_(True)).order_by(User.full_name):
+        managers.setdefault(u.region, []).append(u.full_name or u.email)
+    # regions typed in before the fixed list stay visible until their sites are moved
+    older = sorted(r for r in counts if r and r not in REGIONS)
+    return {
+        "regions": [{"name": r, "sites": counts.get(r, 0), "managers": managers.get(r, []), "current": r in REGIONS}
+                    for r in REGIONS + older],
+        "unallocated": counts.get(None, 0),
+    }
+
+
+class RegionChoice(BaseModel):
+    region: Optional[str] = Field(default=None, max_length=100)
+
+
+@router.put("/{site_id}/region", response_model=SiteOut)
+def allocate_region(
+    request: Request,
+    site_id: int,
+    payload: RegionChoice,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "super_admin")),
+):
+    """Move a site into a region (or take it out of one)."""
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    before = site.region
+    site.region = _region(payload.region, site.region)
+    db.commit()
+    db.refresh(site)
+    log_action(db=db, user=current_user, action="UPDATE_SITE", resource="sites", resource_id=site.id,
+               details=f"{site.name}: region {before or 'none'} -> {site.region or 'none'}",
+               ip_address=request.client.host if request.client else None)
+    return site
 
 
 @router.get("/{site_id}", response_model=SiteOut)
@@ -62,7 +124,9 @@ def create_site(
         raise HTTPException(status_code=400, detail="Site with this name already exists")
 
     # weekly toolbox talks are due from the site's first Monday
-    site = Site(**payload.model_dump(), talks_from=local_today())
+    data = payload.model_dump()
+    data["region"] = _region(data.get("region"))
+    site = Site(**data, talks_from=local_today())
     db.add(site)
     db.commit()
     db.refresh(site)
@@ -91,7 +155,9 @@ def update_site(
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
 
-    for key, val in payload.model_dump().items():
+    data = payload.model_dump()
+    data["region"] = _region(data.get("region"), site.region)
+    for key, val in data.items():
         setattr(site, key, val)
 
     db.commit()
