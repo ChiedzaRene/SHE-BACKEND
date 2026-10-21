@@ -22,7 +22,7 @@ from services.notifications import notify, short, site_name, who
 
 router = APIRouter(prefix="/she-files", tags=["SHE files"])
 
-AUDIENCES = ("site_manager", "she_team", "admin")
+AUDIENCES = ("site_manager", "regional_manager", "she_team", "admin")
 UPLOADER_ROLES = ("admin", "super_admin", "she_team")
 
 
@@ -53,7 +53,8 @@ def _audience(f: SheFile) -> List[str]:
     return [a for a in (f.audience or "").split(",") if a]
 
 
-def _can_see(user: User, f: SheFile) -> bool:
+def _can_see(user: User, f: SheFile, site_regions: Optional[dict] = None) -> bool:
+    """site_regions maps site id -> region; it is needed for regional managers and a file sent to one site."""
     if f.uploaded_by == user.id or _is_admin(user) or user.role in OVERSIGHT_ROLES:
         return True  # admins, operations and directors oversee every shared file
     aud = _audience(f)
@@ -61,7 +62,14 @@ def _can_see(user: User, f: SheFile) -> bool:
         return "she_team" in aud
     if user.role == "site_manager":
         return "site_manager" in aud and (f.site_id is None or f.site_id == user.site_id)
+    if user.role == "regional_manager":
+        # a file for one site goes to that site's regional office too
+        return "regional_manager" in aud and (f.site_id is None or (site_regions or {}).get(f.site_id) == user.region)
     return False
+
+
+def _site_regions(db: Session) -> dict:
+    return {sid: region for sid, region in db.query(Site.id, Site.region).all()}
 
 
 def _viewable(f: SheFile) -> bool:
@@ -88,7 +96,7 @@ def _get_visible(db: Session, user: User, file_id: int, with_data: bool = False)
     if with_data:
         query = query.options(undefer(SheFile.data))
     f = query.filter(SheFile.id == file_id).first()
-    if not f or not _can_see(user, f):
+    if not f or not _can_see(user, f, _site_regions(db) if user.role == "regional_manager" else None):
         raise HTTPException(status_code=404, detail="File not found")
     return f
 
@@ -99,8 +107,9 @@ def _file_response(f: SheFile, kind: str) -> Response:
 
 @router.get("/", response_model=List[SheFileOut])
 def list_files(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    regions = _site_regions(db) if current_user.role == "regional_manager" else None
     files = [f for f in db.query(SheFile).order_by(SheFile.created_at.desc(), SheFile.id.desc()).all()
-             if _can_see(current_user, f)]
+             if _can_see(current_user, f, regions)]
     names = {u.id: (u.full_name or u.email) for u in
              db.query(User).filter(User.id.in_({f.uploaded_by for f in files} or {0})).all()}
     sites = {s.id: s.name for s in db.query(Site).all()}
@@ -112,7 +121,7 @@ async def upload_file(
     request: Request,
     title: str = Form(..., max_length=200),
     description: Optional[str] = Form(None, max_length=2000),
-    audience: str = Form(..., description="comma-separated: site_manager, she_team, admin"),
+    audience: str = Form(..., description="comma-separated: site_manager, regional_manager, she_team, admin"),
     site_id: Optional[int] = Form(None),
     view_only: bool = Form(False),
     file: UploadFile = File(...),
@@ -124,10 +133,10 @@ async def upload_file(
         raise HTTPException(status_code=422, detail="Give the file a title.")
     roles = sorted({a.strip() for a in audience.split(",") if a.strip()})
     if not roles or any(r not in AUDIENCES for r in roles):
-        raise HTTPException(status_code=422, detail="Choose who the file is for: site managers, the SHE team and/or admins.")
+        raise HTTPException(status_code=422, detail="Choose who the file is for: site managers, regional managers, the SHE team and/or admins.")
     if site_id is not None:
-        if "site_manager" not in roles:
-            site_id = None  # a site only narrows down which site managers get it
+        if "site_manager" not in roles and "regional_manager" not in roles:
+            site_id = None  # a site only narrows down which site (and regional) managers get it
         elif not db.query(Site.id).filter(Site.id == site_id).first():
             raise HTTPException(status_code=404, detail="Site not found")
 
@@ -156,8 +165,9 @@ async def upload_file(
                ip_address=request.client.host if request.client else None)
 
     recipients = db.query(User).filter(User.is_active.is_(True)).all()
+    regions = _site_regions(db)
     notify(
-        db, [u for u in recipients if u.id != current_user.id and _can_see(u, f) and (
+        db, [u for u in recipients if u.id != current_user.id and _can_see(u, f, regions) and (
             not _is_admin(u) or "admin" in roles)],
         kind="file_shared", title=f"New SHE file: {short(title, 150)}",
         message=f"{who(current_user)} shared {filename}" + (" (view only)" if view_only else ""),

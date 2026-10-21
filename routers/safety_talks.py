@@ -135,6 +135,9 @@ def overview(
     regions = sorted({s.region for s in all_sites if s.region})
     if current_user.role == "site_manager":
         site_id, region = current_user.site_id, None
+    elif current_user.role == "regional_manager":  # the sites in their region only
+        region = current_user.region or "-"
+        regions = [current_user.region] if current_user.region else []
     sites = [s for s in all_sites if (not site_id or s.id == site_id) and (not region or s.region == region)]
     if site_id and not sites:
         raise HTTPException(status_code=404, detail="Site not found")
