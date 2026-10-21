@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -22,6 +22,7 @@ class Incident(Base):
     # What will be done about it. The description is the record of what happened and can't be changed;
     # the action plan can be filled in and updated later.
     action_plan = Column(String, nullable=True)
+    incident_intake = Column(JSON, nullable=False, default=dict, server_default="{}")
     
 
 
@@ -29,3 +30,11 @@ class Incident(Base):
     site = relationship("Site", back_populates="incidents")
     reported_by = relationship("User", back_populates="incidents")
     corrective_actions = relationship("CorrectiveAction", back_populates="incident")
+    _workflow = relationship("IncidentWorkflow", back_populates="incident", uselist=False,
+                              cascade="all, delete-orphan")
+
+    @property
+    def incident_workflow(self):
+        if self._workflow is not None:
+            return self._workflow
+        return {"status": "reported"}

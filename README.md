@@ -45,6 +45,36 @@ TRIR and LTIFR are calculated in `services/safety_metrics.py` and nowhere else, 
 
 `GET /incidents/metrics/by-site?period=12m|ytd` returns every site's figures in one call.
 
+## Incident investigation workflow
+
+Incident intake is accepted as the `incident_intake` object on `POST /incidents/` and can be
+partially updated with `PUT /incidents/{id}`. The response includes `incident_intake` and an
+`incident_workflow` object. Workflow updates are also partial:
+
+```json
+{
+  "incident_workflow": {
+    "status": "assigned",
+    "investigation_team": "Jane Doe; John Smith",
+    "team_details": "SHE officer and operations representative",
+    "assignment_date": "2026-10-21T09:00:00"
+  }
+}
+```
+
+Stages must move in order: `reported`, `assigned`, `investigating`, `causes_recorded`, `closed`,
+`report_finalised`. SHE users (`she_team`, `admin`, `super_admin`) manage the workflow. Site
+managers create and view incidents for their own site. Operations Managers may only add
+`operations_manager_comment` to fatal incidents. Moving to `causes_recorded`, `closed`, or
+`report_finalised` requires evidence, up to three causes, root cause, corrective action, and
+lessons learnt. Finalisation also requires one of `preliminary_investigation`,
+`interim_corrective_action`, `full_investigation`, or `full_corrective_action`; fatal incidents
+also require Operations Manager comments.
+
+`GET /incidents/{id}/workflow-history` returns the chronological audit records. Each record stores
+the acting user, timestamp, previous stage, new stage, and changed fields. Existing incident list,
+detail, create, update, site, and metrics endpoints remain compatible.
+
 ## Reports
 
 `GET /reports/{kind}` where kind is `performance` (monthly, per site or all sites), `compliance`,

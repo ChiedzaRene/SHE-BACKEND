@@ -3,6 +3,7 @@
 ACTION_LABELS = {
     "CREATE_INCIDENT": "Incident logged",
     "UPDATE_INCIDENT": "Incident updated",
+    "INCIDENT_WORKFLOW_CHANGED": "Incident workflow changed",
     "CREATE_CORRECTIVE_ACTION": "Corrective action created",
     "UPDATE_CORRECTIVE_ACTION": "Corrective action updated",
     "RESOLVE_CORRECTIVE_ACTION": "Corrective action resolved",

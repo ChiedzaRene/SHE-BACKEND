@@ -33,6 +33,7 @@ NEW_COLUMNS = {
     "incidents": [
         ("injured_person", "VARCHAR(150)"),
         ("action_plan", "TEXT"),
+        ("incident_intake", "JSON NOT NULL DEFAULT '{}'"),
     ],
     "site_hours": [
         ("workers", "INTEGER"),
