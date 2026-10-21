@@ -22,6 +22,7 @@ from models.user import User
 from schemas.user import UserCreate, UserResponse, UserSelfUpdate, UserUpdate
 from services.audit_service import log_action
 from services.notifications import notify_account_update, snapshot
+from services.regions import canonical, choose_message
 from services.auth_services import get_current_user, hash_password, require_role
 from services.passwords import reset_by_admin
 
@@ -96,9 +97,12 @@ def _check_region(db: Session, role: str, region: Optional[str]) -> Optional[str
     region = " ".join((region or "").split())
     if not region:
         raise HTTPException(status_code=422, detail="Choose the region this regional manager looks after.")
+    if canonical(region):
+        return canonical(region)
+    # a region typed in before the fixed list existed is still accepted while sites use it
     known = {r for (r,) in db.query(Site.region).filter(Site.region.isnot(None)).all()}
     if region not in known:
-        raise HTTPException(status_code=422, detail=f"No site is in the region \"{region}\". Set the region on the sites first.")
+        raise HTTPException(status_code=422, detail=choose_message())
     return region
 
 

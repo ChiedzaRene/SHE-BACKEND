@@ -201,6 +201,12 @@ def test_regional_managers_need_a_known_region(client, people):
     assert client.post("/users", json={**base, "region": "Atlantis"}, headers=people["admin"]).status_code == 422
     ok = client.post("/users", json={**base, "region": "Harare"}, headers=people["admin"])
     assert ok.status_code == 200 and ok.json()["region"] == "Harare"
+    # one of the fixed regions works even before any site is in it, and the manager shows against it
+    south = client.post("/users", json={**base, "email": "south@x.com", "full_name": "Sipho South", "region": "south east"},
+                        headers=people["admin"])
+    assert south.status_code == 200 and south.json()["region"] == "South East"
+    regions = client.get("/sites/regions", headers=people["admin"]).json()["regions"]
+    assert next(r for r in regions if r["name"] == "South East")["managers"] == ["Sipho South"]
 
 
 def test_site_code_is_saved_upper_case(client, people):

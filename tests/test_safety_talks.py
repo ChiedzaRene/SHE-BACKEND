@@ -169,10 +169,27 @@ def test_dashboard_shows_talk_completion_and_filters_by_region(client, auth):
     assert client.get("/dashboard/summary", params={"period": "3m"}, headers=auth["she"]).status_code == 200
 
 
-def test_sites_have_a_region(client, auth):
-    r = client.post("/sites/", json={"name": "Region Test", "address": "1 Road", "region": "  Masvingo  "},
+def test_sites_belong_to_one_of_the_regions(client, auth):
+    bad = client.post("/sites/", json={"name": "Region Test", "address": "1 Road", "region": "Masvingo"}, headers=auth["admin"])
+    assert bad.status_code == 422 and "Harare East" in bad.json()["detail"]
+    r = client.post("/sites/", json={"name": "Region Test", "address": "1 Road", "region": "  midlands  "},
                     headers=auth["admin"])
-    assert r.status_code == 201 and r.json()["region"] == "Masvingo"
+    assert r.status_code == 201 and r.json()["region"] == "Midlands"     # written as in the list
+    sid = r.json()["id"]
+    # allocating a site to a region from the Sites page
+    assert client.put(f"/sites/{sid}/region", json={"region": "Harare West"}, headers=auth["she"]).status_code == 403
+    moved = client.put(f"/sites/{sid}/region", json={"region": "harare west"}, headers=auth["admin"])
+    assert moved.status_code == 200 and moved.json()["region"] == "Harare West"
+    assert client.put(f"/sites/{sid}/region", json={"region": "Atlantis"}, headers=auth["admin"]).status_code == 422
+    regions = client.get("/sites/regions", headers=auth["she"]).json()
+    names = [r["name"] for r in regions["regions"]]
+    assert names[:5] == ["Harare East", "Harare West", "Midlands", "Matabeleland", "South East"]
+    west = next(r for r in regions["regions"] if r["name"] == "Harare West")
+    assert west["sites"] >= 1 and west["current"] is True
+    # a region typed in before the list existed is still listed while sites use it, marked as old
+    assert all(r["current"] is False for r in regions["regions"][5:])
+    assert client.put(f"/sites/{sid}/region", json={"region": None}, headers=auth["admin"]).json()["region"] is None
+    client.delete(f"/sites/{sid}", headers=auth["admin"])
 
 
 def test_a_site_added_on_tuesday_counts_that_weeks_talk():
