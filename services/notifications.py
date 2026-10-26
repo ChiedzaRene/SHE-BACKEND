@@ -14,7 +14,7 @@ from models.user import User
 
 logger = logging.getLogger("she_portal")
 
-TEAM_ROLES = ("super_admin", "admin", "she_team")
+TEAM_ROLES = ("super_admin", "admin", "she_team", "she_officer")
 
 
 def team(db: Session) -> list:
@@ -93,7 +93,7 @@ def short(text: Optional[str], limit: int = 120) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-ROLE_NAMES = {"super_admin": "Super admin", "admin": "Admin", "she_team": "SHE team", "site_manager": "Site manager"}
+ROLE_NAMES = {"super_admin": "Super admin", "admin": "Admin", "she_team": "SHE team", "she_officer": "SHE officer", "site_manager": "Site manager"}
 
 
 def account_changes(before: dict, user: User, db: Session) -> list:

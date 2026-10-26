@@ -38,6 +38,8 @@ NEW_COLUMNS = {
     "incident_workflows": [
         ("team_members", "JSON"),
         ("action_items", "JSON"),
+        ("report_dates", "JSON"),
+        ("report_revised", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ],
     "site_hours": [
         ("workers", "INTEGER"),
@@ -49,6 +51,7 @@ NEW_COLUMNS = {
     ],
     "corrective_actions": [
         ("nc_id", "INTEGER"),
+        ("control", "VARCHAR(30)"),
     ],
     "trainings": [
         ("document_name", "VARCHAR(255)"),
@@ -94,4 +97,11 @@ def ensure_new_columns(engine) -> list:
                     if name in required:
                         connection.execute(text(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL"))
                         added.append(f"{table}.{name} (now optional)")
+    # The investigation's last stage used to be "report finalised"; closing now records everything it held.
+    if inspector.has_table("incident_workflows"):
+        with ddl_transaction(engine) as connection:
+            moved = connection.execute(text(
+                "UPDATE incident_workflows SET status = 'closed' WHERE status = 'report_finalised'")).rowcount
+        if moved:
+            added.append(f"incident_workflows: {moved} finalised report(s) now closed")
     return added

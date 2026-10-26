@@ -79,7 +79,7 @@ async def record_training(
     comments: Optional[str] = Form(None, max_length=2000),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("she_team", "admin", "super_admin")),
+    current_user: User = Depends(require_role("she_team", "she_officer", "admin", "super_admin")),
 ):
     """A training given by the SHE team (fire fighting, first aid...), with its supporting document."""
     if not db.query(Site.id).filter(Site.id == site_id).first():
@@ -201,7 +201,7 @@ def delete_training(
     request: Request,
     training_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "super_admin", "she_team")),
+    current_user: User = Depends(require_role("admin", "super_admin", "she_team", "she_officer")),
 ):
     training = db.query(Training).filter(Training.id == training_id).first()
     if not training:

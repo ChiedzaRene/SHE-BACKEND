@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 import json
 from datetime import datetime
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, undefer
 from database import get_db
 from models.incident import Incident
 from models.incident_file import IncidentFile
+from models.corrective_action import CorrectiveAction
 from models.incident_workflow import IncidentWorkflow
 from models.site import Site
 from models.user import User
@@ -22,9 +23,16 @@ from typing import List
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
 PeriodQuery = Query("12m", pattern="^(12m|ytd)$", description="Rolling 12 months or year to date")
-WORKFLOW_ROLES = {"super_admin", "admin", "she_team"}
-WORKFLOW_STAGES = ("reported", "assigned", "investigating", "causes_recorded", "closed", "report_finalised")
-REPORT_FINALISED = "report_finalised"
+WORKFLOW_ROLES = {"super_admin", "admin", "she_team", "she_officer"}
+# The order of Glow's Incident Investigation Report Form (GP-SHE/SPR/02/01):
+# the site reports it; SHE assign an investigation team; the team investigates and logs the causes;
+# SHE assign the corrective actions; SHE close it with the lessons learnt, report type and comments.
+WORKFLOW_STAGES = ("reported", "assigned", "investigating", "causes_recorded", "actions_assigned", "closed")
+# What a team member who is not in the SHE team may record
+TEAM_FIELDS = {"status", "evidence", "witness_reports", "sketches", "causes", "root_cause"}
+TEAM_STAGES = {"investigating", "causes_recorded"}
+# Who can be put on an investigation team (operations and directors only read)
+INVESTIGATOR_ROLES = ("she_officer", "she_team", "admin", "super_admin", "regional_manager", "site_manager")
 
 
 def _metrics_response(stats: dict, scope: str, period: str) -> dict:
@@ -39,38 +47,53 @@ def _is_fatal(incident: Incident) -> bool:
     return incident.severity.lower() == "fatal" or any(str(value).lower() == "fatality" for value in values)
 
 
-def _validate_workflow(incident: Incident, workflow: IncidentWorkflow, changes: dict) -> None:
+def _team_ids(incident: Incident) -> set:
+    workflow = incident._workflow
+    return {m.get("user_id") for m in ((workflow.team_members if workflow else None) or []) if m.get("user_id")}
+
+
+def _on_team(incident: Incident, user: User) -> bool:
+    return user.id in _team_ids(incident)
+
+
+def _assert_can_see(db: Session, user: User, incident: Incident) -> None:
+    """The incident's site's people see it, and so does everyone on its investigation team."""
+    if not _on_team(incident, user):
+        assert_site_visible(db, user, incident.site_id)
+
+
+def _incident_actions(db: Session, incident: Incident) -> list:
+    return db.query(CorrectiveAction).filter(CorrectiveAction.incident_id == incident.id).order_by(CorrectiveAction.id).all()
+
+
+def _validate_workflow(db: Session, incident: Incident, workflow: IncidentWorkflow, changes: dict) -> None:
     next_stage = changes.get("status")
     if next_stage is None or next_stage == workflow.status:
         return
-    expected = WORKFLOW_STAGES[WORKFLOW_STAGES.index(workflow.status) + 1] if workflow.status != REPORT_FINALISED else None
+    current = workflow.status if workflow.status in WORKFLOW_STAGES else "reported"
+    position = WORKFLOW_STAGES.index(current)
+    expected = WORKFLOW_STAGES[position + 1] if position + 1 < len(WORKFLOW_STAGES) else None
     if next_stage != expected:
         raise HTTPException(status_code=409, detail=f"Invalid workflow transition from {workflow.status} to {next_stage}")
-    if next_stage == "assigned" and not all((
-        changes.get("investigation_team", workflow.investigation_team),
-        changes.get("team_details", workflow.team_details),
-        changes.get("assignment_date", workflow.assignment_date),
-    )):
-        raise HTTPException(status_code=422, detail="Team members, team details and assignment date are required")
-    if next_stage in ("causes_recorded", "closed", REPORT_FINALISED):
+    if next_stage == "assigned" and not changes.get("team_members", workflow.team_members):
+        raise HTTPException(status_code=422, detail="Choose at least one person for the investigation team")
+    if next_stage == "causes_recorded":
         causes = changes.get("causes", workflow.causes)
         # the site's own evidence (reported with the incident) and uploaded files count too
         evidence = (changes.get("evidence", workflow.evidence) or (incident.incident_intake or {}).get("evidence")
                     or incident._files)
-        required = (
-            evidence,
-            causes and len(causes) <= 3,
-            changes.get("root_cause", workflow.root_cause),
-            changes.get("corrective_action", workflow.corrective_action),
-            changes.get("lessons_learned", workflow.lessons_learned),
-        )
-        if not all(required):
-            raise HTTPException(status_code=422, detail="Evidence, up to three causes, root cause, corrective action and lessons learnt are required")
-    if next_stage == REPORT_FINALISED:
-        if not changes.get("report_type", workflow.report_type):
-            raise HTTPException(status_code=422, detail="report_type is required before finalisation")
+        if not (evidence and causes and len(causes) <= 3 and changes.get("root_cause", workflow.root_cause)):
+            raise HTTPException(status_code=422, detail="Evidence, one to three causes and the root cause are required")
+    if next_stage == "actions_assigned" and not _incident_actions(db, incident):
+        raise HTTPException(status_code=422, detail="Assign at least one corrective action first")
+    if next_stage == "closed":
+        missing = [label for key, label in (("lessons_learned", "lessons learnt"), ("report_type", "a report type"),
+                                            ("she_comment", "the SHE Officer's comment"))
+                   if not changes.get(key, getattr(workflow, key))]
         if _is_fatal(incident) and not changes.get("operations_manager_comment", workflow.operations_manager_comment):
-            raise HTTPException(status_code=422, detail="Operations Manager comments are required for fatal incidents")
+            missing.append("the Operations Manager's comment (fatal incident)")
+        if missing:
+            raise HTTPException(status_code=422, detail="Before closing, record " + ", ".join(missing))
 
 
 def _parse_day(value):
@@ -80,37 +103,32 @@ def _parse_day(value):
         return None
 
 
-CONTROL_LABELS = {"elimination": "Elimination", "substitution": "Substitution", "isolation": "Isolate",
-                  "redesign": "Redesign", "administration": "Administration", "ppe": "PPE"}
+ROLE_TITLES = {"she_officer": "SHE Officer", "she_team": "SHE team", "admin": "Admin", "super_admin": "Admin",
+               "regional_manager": "Regional manager", "site_manager": "Site manager"}
 
 
-def _from_form_tables(changes: dict) -> None:
-    """The form's tables (team rows, corrective-action rows) also fill the matching summary fields."""
-    members = [m for m in (changes.get("team_members") or []) if (m.get("name") or "").strip()]
-    if "team_members" in changes:
-        changes["team_members"] = members
+def _team_from_accounts(db: Session, changes: dict) -> None:
+    """Team rows name people with accounts; the summary fields are filled from them."""
+    if "team_members" not in changes:
+        return
+    rows = [m for m in (changes.get("team_members") or []) if m.get("user_id")]
+    people = {u.id: u for u in db.query(User).filter(User.id.in_([m["user_id"] for m in rows] or [0]),
+                                                     User.is_active.is_(True)).all()}
+    members = []
+    for m in rows:
+        person = people.get(m["user_id"])
+        if person is None or person.role not in INVESTIGATOR_ROLES:
+            raise HTTPException(status_code=422, detail="Investigation team members must be active people who can investigate")
+        if any(x["user_id"] == person.id for x in members):
+            continue
+        members.append({"user_id": person.id, "name": person.full_name or person.email,
+                        "job_title": m.get("job_title") or ROLE_TITLES.get(person.role), "date": m.get("date")})
+    changes["team_members"] = members
     if members:
-        changes.setdefault("investigation_team", "; ".join(
-            f"{m['name']} ({m['job_title']})" if m.get("job_title") else m["name"] for m in members))
-        changes.setdefault("team_details", "; ".join(
-            ", ".join(p for p in (m["name"], m.get("job_title"), m.get("date")) if p) for m in members))
+        changes["investigation_team"] = "; ".join(f"{m['name']} ({m['job_title']})" for m in members)
+        changes["team_details"] = "; ".join(", ".join(p for p in (m["name"], m["job_title"], m["date"]) if p) for m in members)
         days = [d for d in (_parse_day(m.get("date")) for m in members) if d]
-        if not changes.get("assignment_date"):
-            changes["assignment_date"] = min(days) if days else datetime.utcnow()
-    items = [a for a in (changes.get("action_items") or []) if (a.get("action") or "").strip()]
-    if "action_items" in changes:
-        changes["action_items"] = items
-    if items:
-        changes.setdefault("corrective_action", "\n".join(
-            a["action"] + (f" [{CONTROL_LABELS.get(a.get('control'), a.get('control'))}]" if a.get("control") else "")
-            + (f" by {a['by_whom']}" if a.get("by_whom") else "") + (f", by {a['by_when']}" if a.get("by_when") else "")
-            for a in items))
-        owners = [a["by_whom"] for a in items if a.get("by_whom")]
-        if owners:
-            changes.setdefault("responsible_person", ", ".join(dict.fromkeys(owners)))
-        dues = [d for d in (_parse_day(a.get("by_when")) for a in items) if d]
-        if dues:
-            changes.setdefault("due_date", max(dues))
+        changes["assignment_date"] = min(days) if days else datetime.utcnow()
 
 
 def _apply_workflow(incident: Incident, workflow_data, user: User, request: Request, db: Session) -> None:
@@ -119,23 +137,32 @@ def _apply_workflow(incident: Incident, workflow_data, user: User, request: Requ
         if set(changes) != {"operations_manager_comment"} or not _is_fatal(incident):
             raise HTTPException(status_code=403, detail="Operations Managers may only comment on fatal incidents")
     elif user.role not in WORKFLOW_ROLES:
-        raise HTTPException(status_code=403, detail="Only SHE users may update the incident workflow")
+        # the investigation team records what they find: evidence, causes and the root cause
+        if not _on_team(incident, user):
+            raise HTTPException(status_code=403, detail="Only the SHE team and the investigation team may update the investigation")
+        if set(changes) - TEAM_FIELDS or changes.get("status", "investigating") not in TEAM_STAGES:
+            raise HTTPException(status_code=403, detail="The investigation team records the evidence and causes; the SHE team does the rest")
     workflow = incident._workflow
     if workflow is None:
         workflow = IncidentWorkflow(incident_id=incident.id)
         db.add(workflow)
         db.flush()
     previous = workflow.status
-    _from_form_tables(changes)
+    before_team = _team_ids(incident)
+    _team_from_accounts(db, changes)
     if user.role != "operations":
-        _validate_workflow(incident, workflow, changes)
+        _validate_workflow(db, incident, workflow, changes)
     for key, value in changes.items():
         setattr(workflow, key, value)
+    if changes.get("status") == "actions_assigned":
+        actions = _incident_actions(db, incident)
+        workflow.corrective_action = "\n".join(a.action_taken for a in actions)
+        workflow.responsible_person = ", ".join(dict.fromkeys(a.assigned_to for a in actions if a.assigned_to))[:255]
+        dues = [a.due_date for a in actions if a.due_date]
+        workflow.due_date = max(dues) if dues else None
     if changes.get("status") == "closed":
         workflow.closed_at = datetime.utcnow()
         workflow.closed_by_id = user.id
-        incident.resolved = True
-    if changes.get("status") == REPORT_FINALISED:
         incident.resolved = True
     db.commit()
     db.refresh(workflow)
@@ -143,6 +170,35 @@ def _apply_workflow(incident: Incident, workflow_data, user: User, request: Requ
                           "changed_fields": sorted(changes)})
     log_action(db=db, user=user, action="INCIDENT_WORKFLOW_CHANGED", resource="incidents",
                resource_id=incident.id, details=details, ip_address=request.client.host)
+    _tell_people(db, incident, user, previous, workflow, before_team)
+
+
+def _tell_people(db: Session, incident: Incident, actor: User, previous: str, workflow: IncidentWorkflow,
+                 before_team: set) -> None:
+    where = site_name(db, incident.site_id)
+    now_on = {m.get("user_id") for m in (workflow.team_members or []) if m.get("user_id")}
+    added = db.query(User).filter(User.id.in_(now_on - before_team or {0})).all()
+    notify(db, added, kind="incident_team",
+           title=f"You are on the investigation team for INC-{incident.id} at {where}",
+           message=f"{who(actor)} assigned you to investigate: {short(incident.description)}",
+           link="/incidents", resource="incidents", resource_id=incident.id, actor=actor)
+    if workflow.status != previous and workflow.status in ("causes_recorded", "closed"):
+        done = "The causes were recorded" if workflow.status == "causes_recorded" else "The investigation was closed"
+        notify(db, team(db) + (site_managers(db, incident.site_id) if workflow.status == "closed" else []),
+               kind="incident_stage", title=f"INC-{incident.id} at {where}: {done.lower()}",
+               message=f"{done} by {who(actor)}.",
+               link="/incidents", resource="incidents", resource_id=incident.id, actor=actor)
+
+
+@router.get("/investigators")
+def list_investigators(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The people the SHE team can put on an investigation team."""
+    if current_user.role not in WORKFLOW_ROLES:
+        raise HTTPException(status_code=403, detail="Only the SHE team assigns investigation teams")
+    people = (db.query(User).filter(User.role.in_(INVESTIGATOR_ROLES), User.is_active.is_(True))
+              .order_by(User.full_name, User.email).all())
+    return [{"id": u.id, "name": u.full_name or u.email, "role": u.role, "job_title": ROLE_TITLES.get(u.role),
+             "site_id": u.site_id} for u in people]
 
 
 # Get all incidents
@@ -154,11 +210,17 @@ def get_all_incidents(
     current_user: User = Depends(get_current_user)
 ):
     query = db.query(Incident)
+    seen = None
     if current_user.role == "site_manager":
-        query = query.filter(Incident.site_id == current_user.site_id)
+        seen = Incident.site_id == current_user.site_id
     mine = region_site_ids(db, current_user)
     if mine is not None:  # a regional manager sees the incidents at the sites in their region
-        query = query.filter(Incident.site_id.in_(mine or [0]))
+        seen = Incident.site_id.in_(mine or [0])
+    if seen is not None:
+        # and anyone on an investigation team sees that incident wherever it happened
+        investigating = [w.incident_id for w in db.query(IncidentWorkflow).filter(IncidentWorkflow.team_members.isnot(None)).all()
+                         if current_user.id in {m.get("user_id") for m in (w.team_members or [])}]
+        query = query.filter(or_(seen, Incident.id.in_(investigating)) if investigating else seen)
     return page.apply(query, response, Incident.id.desc()).all()
 
 # Totals for the dashboards (how many, how many still open, split by type) without sending every incident
@@ -251,7 +313,7 @@ def get_workflow_history(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    assert_site_visible(db, current_user, incident.site_id)
+    _assert_can_see(db, current_user, incident)
     from models.audit_log import AuditLog
     return db.query(AuditLog).filter(
         AuditLog.resource == "incidents",
@@ -270,7 +332,7 @@ def get_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    assert_site_visible(db, current_user, incident.site_id)
+    _assert_can_see(db, current_user, incident)
     return incident
 
 # Create incident
@@ -324,10 +386,15 @@ def update_incident(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    assert_site_visible(db, current_user, incident.site_id)
+    _assert_can_see(db, current_user, incident)
     changes = incident_data.model_dump(exclude_unset=True)
     workflow_data = changes.pop("incident_workflow", None)
     intake = changes.pop("incident_intake", None)
+    if (intake is not None or changes) and _on_team(incident, current_user):
+        try:  # someone from elsewhere on the team works on the investigation only
+            assert_site_visible(db, current_user, incident.site_id)
+        except HTTPException:
+            raise HTTPException(status_code=403, detail="As an investigation team member you may update the investigation only")
     if workflow_data is not None:
         _apply_workflow(incident, workflow_data, current_user, request, db)
     if current_user.role == "operations" and (intake is not None or changes):
@@ -335,6 +402,9 @@ def update_incident(
     if intake is not None:
         if current_user.role != "site_manager" and current_user.role not in WORKFLOW_ROLES:
             raise HTTPException(status_code=403, detail="You don't have permission to update incident intake")
+        stage = incident._workflow.status if incident._workflow else "reported"
+        if current_user.role == "site_manager" and stage != "reported":
+            raise HTTPException(status_code=409, detail="The SHE team has taken this report on, so the site can no longer change it")
         incident.incident_intake = {**(incident.incident_intake or {}), **intake}
     if "description" in changes and (changes["description"] or "").strip() != (incident.description or "").strip():
         raise HTTPException(status_code=409, detail="An incident's description can't be changed once it is logged. Add to the action plan instead.")
@@ -362,7 +432,7 @@ def _incident_for_files(db: Session, user: User, incident_id: int) -> Incident:
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    assert_site_visible(db, user, incident.site_id)
+    _assert_can_see(db, user, incident)
     return incident
 
 
@@ -376,7 +446,7 @@ async def add_evidence(
 ):
     """Attach a piece of evidence. The site does so while reporting; the SHE team at any stage."""
     incident = _incident_for_files(db, current_user, incident_id)
-    if current_user.role not in EVIDENCE_ROLES:
+    if current_user.role not in EVIDENCE_ROLES and not _on_team(incident, current_user):
         raise HTTPException(status_code=403, detail="You can't add evidence to this incident.")
     if len(incident._files) >= 20:
         raise HTTPException(status_code=422, detail="An incident can have up to 20 evidence files.")

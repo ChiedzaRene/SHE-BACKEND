@@ -23,7 +23,7 @@ from services.notifications import notify, short, site_name, who
 router = APIRouter(prefix="/she-files", tags=["SHE files"])
 
 AUDIENCES = ("site_manager", "regional_manager", "she_team", "admin")
-UPLOADER_ROLES = ("admin", "super_admin", "she_team")
+UPLOADER_ROLES = ("admin", "super_admin", "she_team", "she_officer")
 
 
 class SheFileOut(BaseModel):
@@ -58,7 +58,7 @@ def _can_see(user: User, f: SheFile, site_regions: Optional[dict] = None) -> boo
     if f.uploaded_by == user.id or _is_admin(user) or user.role in OVERSIGHT_ROLES:
         return True  # admins, operations and directors oversee every shared file
     aud = _audience(f)
-    if user.role == "she_team":
+    if user.role in ("she_team", "she_officer"):  # SHE officers are part of the SHE team
         return "she_team" in aud
     if user.role == "site_manager":
         return "site_manager" in aud and (f.site_id is None or f.site_id == user.site_id)

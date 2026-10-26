@@ -32,7 +32,7 @@ from services.richtext import clean_html, plain_text
 
 router = APIRouter(prefix="/site-inspections", tags=["Inspections"])
 
-SHE_ROLES = ("she_team", "admin", "super_admin")
+SHE_ROLES = ("she_team", "she_officer", "admin", "super_admin")
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_PROOF = 10          # proof files per report or per NC
 MAX_EVIDENCE = 5        # proof files sent with one completed corrective action
@@ -273,7 +273,7 @@ def assignees(inspection_id: int, db: Session = Depends(get_db), current_user: U
             label = "Site manager"
         elif u.role == "regional_manager" and site.region and u.region == site.region:
             label = "Regional office"
-        elif u.role == "she_team":
+        elif u.role in ("she_team", "she_officer"):
             label = "SHE office"
         else:
             continue
@@ -622,7 +622,7 @@ async def complete_nc(
                details=f"Marked the corrective action for NC {nc.serial} completed",
                ip_address=request.client.host if request.client else None)
     reviewers = team(db)
-    notify(db, [u for u in reviewers if u.role == "she_team"] or reviewers, kind="nc_completed",
+    notify(db, [u for u in reviewers if u.role in ("she_team", "she_officer")] or reviewers, kind="nc_completed",
            title=f"NC {nc.serial} completed at {site.name}: please review",
            message=f"{who(current_user)}: {short(text, 200)}",
            link=f"/inspections/{insp.id}", resource="site_inspections", resource_id=insp.id, actor=current_user)

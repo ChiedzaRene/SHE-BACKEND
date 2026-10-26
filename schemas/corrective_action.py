@@ -1,8 +1,12 @@
 from datetime import datetime
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 import html
 import bleach
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+
+# hierarchy of control from the incident form, most effective first
+CONTROLS = Literal["elimination", "substitution", "isolation", "redesign", "administration", "ppe"]
 
 
 def sanitize_text(value: Optional[str]) -> Optional[str]:
@@ -44,6 +48,7 @@ class CorrectiveActionCreate(BaseModel):
         default=None,
         validation_alias=AliasChoices("due_date", "dueDate"),
     )
+    control: Optional[CONTROLS] = None
 
     @field_validator(
         "description", "action_taken", "designation", "status", "priority", mode="before"
@@ -87,6 +92,7 @@ class CorrectiveActionUpdate(BaseModel):
         default=None,
         validation_alias=AliasChoices("due_date", "dueDate"),
     )
+    control: Optional[CONTROLS] = None
     date_resolved: Optional[datetime] = Field(
         default=None,
         validation_alias=AliasChoices("date_resolved", "dateResolved"),
@@ -135,6 +141,9 @@ class CorrectiveActionResponse(BaseModel):
     is_successful: Optional[str] = None
     nc_id: Optional[int] = None
     inspection_id: Optional[int] = None
+    control: Optional[str] = None
+    # what happened, as reported: fixed once logged, so the action plan above holds only the plan
+    incident_description: Optional[str] = None
 
     class Config:
         from_attributes = True

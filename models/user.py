@@ -9,7 +9,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     password = Column(String, nullable=False)
     full_name = Column(String, nullable=True)
-    role = Column(String, nullable=False)  # "super_admin", "admin", "she_team", "regional_manager", "site_manager"
+    role = Column(String, nullable=False)  # "super_admin", "admin", "she_team", "she_officer", "regional_manager", "site_manager"
     is_active = Column(Boolean, default=True, server_default='true', nullable=False)
     site_id = Column(Integer, ForeignKey("sites.id"), nullable=True)
     # regional managers look after every site in their region (sites.region)

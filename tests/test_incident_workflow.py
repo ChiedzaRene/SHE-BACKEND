@@ -1,44 +1,98 @@
-from datetime import datetime
-
+"""The incident investigation, in the order of Glow's form GP-SHE/SPR/02/01:
+the site reports it, SHE assign a team (people with accounts), the team logs the causes,
+SHE assign corrective actions (with the hierarchy of control) and close it."""
 import pytest
 
-from database import SessionLocal
+from database import SessionLocal, engine
+from models.corrective_action import CorrectiveAction
 from models.incident import Incident
 from models.incident_file import IncidentFile
 from models.incident_workflow import IncidentWorkflow
+from models.notification import Notification
+from models.user import User
+from services.auth_services import hash_password
+from services.migrations import ensure_new_columns
+from tests.conftest import PASSWORD
+
+DESCRIPTION = "Investigation test incident"
+# people who only exist for these tests: a SHE officer, the manager of the other site, operations, a director
+PEOPLE = [
+    (51, "inv-officer@x.com", "she_officer", None, "Rudo Officer"),
+    (52, "inv-mgr2@x.com", "site_manager", 2, "Peter Two"),
+    (53, "inv-ops@x.com", "operations", None, "Olivia Ops"),
+    (54, "inv-director@x.com", "director", None, "Dan Director"),
+]
+
+
+@pytest.fixture(scope="module")
+def people(client):
+    db = SessionLocal()
+    db.add_all([User(id=uid, email=email, password=hash_password(PASSWORD), role=role, site_id=site, full_name=name)
+                for uid, email, role, site, name in PEOPLE])
+    db.commit()
+    db.close()
+    headers = {}
+    for uid, email, *_ in PEOPLE:
+        r = client.post("/auth/login", data={"username": email, "password": PASSWORD})
+        assert r.status_code == 200, r.text
+        headers[email.split("@")[0].removeprefix("inv-")] = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    yield headers
+    db = SessionLocal()
+    ids = [uid for uid, *_ in PEOPLE]
+    db.query(Notification).filter(Notification.user_id.in_(ids)).delete(synchronize_session=False)
+    db.query(User).filter(User.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    db.close()
 
 
 @pytest.fixture(autouse=True)
 def clean_workflow_test_data():
     yield
     db = SessionLocal()
-    ids = [incident.id for incident in db.query(Incident).filter(Incident.description == "Investigation test incident").all()]
+    ids = [i.id for i in db.query(Incident).filter(Incident.description == DESCRIPTION).all()]
     if ids:
+        db.query(CorrectiveAction).filter(CorrectiveAction.incident_id.in_(ids)).delete(synchronize_session=False)
         db.query(IncidentFile).filter(IncidentFile.incident_id.in_(ids)).delete(synchronize_session=False)
         db.query(IncidentWorkflow).filter(IncidentWorkflow.incident_id.in_(ids)).delete(synchronize_session=False)
-    db.query(Incident).filter(Incident.description == "Investigation test incident").delete(synchronize_session=False)
+        db.query(Notification).filter(Notification.resource == "incidents", Notification.resource_id.in_(ids)) \
+            .delete(synchronize_session=False)
+    db.query(Incident).filter(Incident.description == DESCRIPTION).delete(synchronize_session=False)
     db.commit()
     db.close()
 
 
 def create_incident(client, auth, severity="high", intake=None):
     response = client.post("/incidents/", json={
-        "site_id": 1,
-        "type": "injury",
-        "description": "Investigation test incident",
-        "severity": severity,
-        "incident_intake": intake or {},
+        "site_id": 1, "type": "injury", "description": DESCRIPTION, "severity": severity,
+        "incident_intake": {"evidence": "Photos taken by the site"} if intake is None else intake,
     }, headers=auth["mgr"])
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def workflow(status, **fields):
-    return {"incident_workflow": {"status": status, **fields}}
+def workflow(status=None, **fields):
+    return {"incident_workflow": ({"status": status} if status else {}) | fields}
+
+
+def assign_ca(client, headers, incident, **over):
+    return client.post("/corrective-actions/", json={
+        "incident_id": incident["id"], "action_taken": "Fit an overfill alarm on pump 3", "assigned_to": "Manager",
+        "control": "redesign", "due_date": "2026-11-15T00:00:00", "priority": "high", **over}, headers=headers)
+
+
+def to_actions_assigned(client, auth, people, incident):
+    path = f"/incidents/{incident['id']}"
+    assert client.put(path, json=workflow("assigned", team_members=[{"user_id": 51}]), headers=auth["she"]).status_code == 200
+    assert client.put(path, json=workflow("investigating"), headers=people["officer"]).status_code == 200
+    assert client.put(path, json=workflow("causes_recorded", causes=["Failure to use PPE"], root_cause="Inadequate training"),
+                      headers=people["officer"]).status_code == 200
+    assert assign_ca(client, auth["she"], incident).status_code == 200
+    assert client.put(path, json=workflow("actions_assigned"), headers=auth["she"]).status_code == 200
+    return path
 
 
 def test_site_manager_can_create_and_view_site_incident(client, auth):
-    incident = create_incident(client, auth)
+    incident = create_incident(client, auth, intake={})
     assert incident["incident_intake"] == {}
     assert incident["incident_workflow"]["status"] == "reported"
     assert client.get(f"/incidents/{incident['id']}", headers=auth["mgr"]).status_code == 200
@@ -48,80 +102,104 @@ def test_site_manager_cannot_access_other_site(client, auth):
     assert client.get("/incidents/site/2", headers=auth["mgr"]).status_code == 403
 
 
-def test_she_assignment_and_investigation_updates(client, auth):
+def test_the_investigation_follows_the_form(client, auth, people):
     incident = create_incident(client, auth)
     path = f"/incidents/{incident['id']}"
-    assigned = client.put(path, json=workflow("assigned", investigation_team="A", team_details="SHE", assignment_date=datetime.utcnow().isoformat()), headers=auth["she"])
-    assert assigned.status_code == 200, assigned.text
-    investigating = client.put(path, json=workflow("investigating", evidence="Photo ref 1", costs="Repair", cost_usd=125.50), headers=auth["she"])
-    assert investigating.status_code == 200, investigating.text
-    assert investigating.json()["incident_workflow"]["cost_usd"] == 125.5
 
-
-def test_causes_closure_and_finalisation_require_complete_data(client, auth):
-    incident = create_incident(client, auth)
-    path = f"/incidents/{incident['id']}"
-    assert client.put(path, json=workflow("assigned", investigation_team="A", team_details="SHE", assignment_date=datetime.utcnow().isoformat()), headers=auth["she"]).status_code == 200
-    assert client.put(path, json=workflow("investigating", evidence="Evidence"), headers=auth["she"]).status_code == 200
-    assert client.put(path, json=workflow("causes_recorded", causes=["Unsafe act"], root_cause="Training", corrective_action="Retrain", lessons_learned="Review monthly"), headers=auth["she"]).status_code == 200
-    closed = client.put(path, json=workflow("closed"), headers=auth["she"])
-    assert closed.status_code == 200 and closed.json()["resolved"] is True
-    finalised = client.put(path, json=workflow("report_finalised", report_type="full_investigation", she_comment="Complete"), headers=auth["she"])
-    assert finalised.status_code == 200
-
-
-def test_invalid_transition_and_fatal_comment_rule(client, auth):
-    incident = create_incident(client, auth, severity="fatal", intake={"categories": ["Fatality"]})
-    path = f"/incidents/{incident['id']}"
-    assert client.put(path, json=workflow("closed"), headers=auth["she"]).status_code == 409
-    fields = {"evidence": "Evidence", "causes": ["Cause"], "root_cause": "Root", "corrective_action": "Action", "lessons_learned": "Lesson"}
-    for stage, extra in (("assigned", {"investigation_team": "A", "team_details": "SHE", "assignment_date": datetime.utcnow().isoformat()}), ("investigating", {}), ("causes_recorded", {}), ("closed", {})):
-        payload = {**fields, **extra} if stage == "causes_recorded" else extra
-        assert client.put(path, json=workflow(stage, **payload), headers=auth["she"]).status_code == 200
-    assert client.put(path, json=workflow("report_finalised", report_type="full_investigation"), headers=auth["she"]).status_code == 422
-
-
-def test_workflow_history_records_transition(client, auth):
-    incident = create_incident(client, auth)
-    path = f"/incidents/{incident['id']}"
-    client.put(path, json=workflow("assigned", investigation_team="A", team_details="SHE", assignment_date=datetime.utcnow().isoformat()), headers=auth["she"])
-    history = client.get(f"/incidents/{incident['id']}/workflow-history", headers=auth["she"])
-    assert history.status_code == 200
-    assert history.json()[-1]["action"] == "INCIDENT_WORKFLOW_CHANGED"
-
-def test_the_forms_tables_fill_the_investigation(client, auth):
-    """Team rows and corrective-action rows (with the hierarchy of control) as on form GP-SHE/SPR/02/01."""
-    incident = create_incident(client, auth, intake={"evidence": "Photos taken by the site", "reporter_name": "Tendai"})
-    path = f"/incidents/{incident['id']}"
+    # SHE pick the team from the people with accounts; names and job titles come from the accounts
+    assert client.put(path, json=workflow("assigned"), headers=auth["she"]).status_code == 422
     assigned = client.put(path, json=workflow("assigned", team_members=[
-        {"name": "Rudo Chikore", "job_title": "SHE officer", "date": "2026-10-20"},
-        {"name": "Peter Ncube", "job_title": "Operations", "date": "2026-10-21"},
-        {"name": "  ", "job_title": "blank rows are dropped"},
-    ]), headers=auth["she"])
+        {"user_id": 51, "date": "2026-10-20"}, {"user_id": 52, "job_title": "Depot manager", "date": "2026-10-21"},
+        {"user_id": None}, {"user_id": 51}]), headers=auth["she"])
     assert assigned.status_code == 200, assigned.text
     wf = assigned.json()["incident_workflow"]
-    assert [m["name"] for m in wf["team_members"]] == ["Rudo Chikore", "Peter Ncube"]
-    assert wf["investigation_team"] == "Rudo Chikore (SHE officer); Peter Ncube (Operations)"
+    assert wf["team_members"] == [
+        {"user_id": 51, "name": "Rudo Officer", "job_title": "SHE Officer", "date": "2026-10-20"},
+        {"user_id": 52, "name": "Peter Two", "job_title": "Depot manager", "date": "2026-10-21"}]
+    assert wf["investigation_team"] == "Rudo Officer (SHE Officer); Peter Two (Depot manager)"
     assert wf["assignment_date"].startswith("2026-10-20")
-    assert client.put(path, json=workflow("investigating"), headers=auth["she"]).status_code == 200
-    # the site's own evidence counts, so the SHE team need not retype it
+    told = client.get("/notifications/", headers=people["mgr2"]).json()
+    assert any(f"INC-{incident['id']}" in n["title"] for n in (told["items"] if isinstance(told, dict) else told))
+
+    # the manager of another site is on the team: they now see this incident, and only work on the investigation
+    assert incident["id"] in [i["id"] for i in client.get("/incidents/", headers=people["mgr2"]).json()]
+    assert client.get(path, headers=people["mgr2"]).status_code == 200
+    assert client.put(path, json={"action_plan": "x"}, headers=people["mgr2"]).status_code == 403
+    assert client.put(path, json=workflow("investigating"), headers=people["mgr2"]).status_code == 200
+    # the team logs the causes; lessons learnt and the rest are for SHE when closing
+    assert client.put(path, json=workflow(lessons_learned="x"), headers=people["mgr2"]).status_code == 403
+    assert client.put(path, json=workflow("causes_recorded", causes=["Failure to use PPE"]), headers=people["mgr2"]).status_code == 422
     recorded = client.put(path, json=workflow("causes_recorded", causes=["Failure to use PPE", "Poor housekeeping"],
-                                             root_cause="Inadequate training", lessons_learned="Toolbox talk on PPE",
-                                             action_items=[
-                                                 {"action": "Guard the pump", "control": "isolation", "by_whom": "Tendai", "by_when": "2026-11-01"},
-                                                 {"action": "Gloves for all", "control": "ppe", "by_whom": "Rudo", "by_when": "2026-11-15"},
-                                             ]), headers=auth["she"])
+                                             root_cause="Inadequate training"), headers=people["mgr2"])
     assert recorded.status_code == 200, recorded.text
-    wf = recorded.json()["incident_workflow"]
-    assert wf["corrective_action"].startswith("Guard the pump [Isolate] by Tendai, by 2026-11-01")
-    assert wf["responsible_person"] == "Tendai, Rudo" and wf["due_date"].startswith("2026-11-15")
-    assert [a["control"] for a in wf["action_items"]] == ["isolation", "ppe"]
-    assert client.put(path, json=workflow("closed", action_items=[{"action": "x", "control": "magic"}]),
-                      headers=auth["she"]).status_code == 422   # only the six controls on the form
+    # the site can no longer change its report now SHE have it
+    assert client.put(path, json={"incident_intake": {"location": "x"}}, headers=auth["mgr"]).status_code == 409
+
+    # SHE assign the corrective actions, each with its hierarchy of control
+    assert client.put(path, json=workflow("actions_assigned"), headers=auth["she"]).status_code == 422
+    assert assign_ca(client, auth["mgr"], incident).status_code == 403
+    assert assign_ca(client, auth["she"], incident, control="magic").status_code == 422
+    ca = assign_ca(client, auth["she"], incident, site_id=2)
+    assert ca.status_code == 200, ca.text
+    ca = ca.json()
+    assert ca["control"] == "redesign" and ca["site_id"] == 1            # always the incident's site
+    assert ca["incident_description"] == DESCRIPTION                     # fixed; the action holds the plan
+    moved = client.put(path, json=workflow("actions_assigned"), headers=auth["she"])
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["incident_workflow"]["corrective_action"] == "Fit an overfill alarm on pump 3"
+    assert client.put(path, json=workflow("closed"), headers=people["mgr2"]).status_code == 403
+
+    # closing needs the lessons learnt, the report type and the SHE Officer's comment
+    refused = client.put(path, json=workflow("closed", lessons_learned="Watch every delivery"), headers=people["officer"])
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "Before closing, record a report type, the SHE Officer's comment"
+    closed = client.put(path, json=workflow("closed", lessons_learned="Watch every delivery", report_type="full_investigation",
+                                           report_dates={"preliminary_investigation": "2026-10-21", "full_investigation": "2026-10-30"},
+                                           report_revised=True, she_comment="Done"), headers=people["officer"])
+    assert closed.status_code == 200, closed.text
+    body = closed.json()
+    assert body["resolved"] is True
+    wf = body["incident_workflow"]
+    assert wf["status"] == "closed" and wf["report_revised"] is True and wf["closed_at"]
+    assert wf["report_dates"] == {"preliminary_investigation": "2026-10-21", "full_investigation": "2026-10-30"}
+    history = client.get(f"{path}/workflow-history", headers=auth["she"]).json()
+    assert [h["action"] for h in history].count("INCIDENT_WORKFLOW_CHANGED") >= 5
 
 
-def test_evidence_files(client, auth):
+def test_stages_go_in_order_and_a_fatality_needs_the_operations_comment(client, auth, people):
+    incident = create_incident(client, auth, severity="fatal", intake={"categories": ["fatality"], "evidence": "Photos"})
+    path = f"/incidents/{incident['id']}"
+    assert client.put(path, json=workflow("closed"), headers=auth["she"]).status_code == 409
+    to_actions_assigned(client, auth, people, incident)
+    closing = dict(lessons_learned="L", report_type="full_investigation", she_comment="S")
+    refused = client.put(path, json=workflow("closed", **closing), headers=auth["she"])
+    assert refused.status_code == 422 and "Operations Manager" in refused.json()["detail"]
+    # operations comment on fatal incidents only, and nothing else
+    assert client.put(path, json=workflow(operations_manager_comment="Reviewed", lessons_learned="x"),
+                      headers=people["ops"]).status_code == 403
+    assert client.put(path, json=workflow(operations_manager_comment="Reviewed with the board"),
+                      headers=people["ops"]).status_code == 200
+    assert client.put(path, json=workflow("closed", **closing), headers=auth["she"]).status_code == 200
+
+
+def test_only_people_who_can_investigate_join_a_team(client, auth, people):
+    listed = client.get("/incidents/investigators", headers=people["officer"])
+    assert listed.status_code == 200
+    roles = {p["id"]: p["role"] for p in listed.json()}
+    assert roles[51] == "she_officer" and roles[52] == "site_manager"
+    assert 53 not in roles and 54 not in roles            # operations and directors only read
+    assert client.get("/incidents/investigators", headers=auth["mgr"]).status_code == 403
     incident = create_incident(client, auth)
+    path = f"/incidents/{incident['id']}"
+    assert client.put(path, json=workflow("assigned", team_members=[{"user_id": 54}]), headers=auth["she"]).status_code == 422
+    assert client.put(path, json=workflow("assigned", team_members=[{"user_id": 999}]), headers=auth["she"]).status_code == 422
+    # someone not on the team gets nowhere
+    assert client.get(path, headers=people["mgr2"]).status_code == 403
+    assert client.put(path, json=workflow("assigned", team_members=[{"user_id": 51}]), headers=auth["mgr"]).status_code == 403
+
+
+def test_evidence_files(client, auth, people):
+    incident = create_incident(client, auth, intake={})
     path = f"/incidents/{incident['id']}/files"
     pdf = ("statement.pdf", b"%PDF-1.4 witness statement", "application/pdf")
     added = client.post(path, files={"file": pdf}, headers=auth["mgr"])
@@ -131,16 +209,36 @@ def test_evidence_files(client, auth):
     fid = files[0]["id"]
     assert files[0]["uploaded_by"] is not None   # the app offers removal to the uploader
     assert client.get(f"{path}/{fid}", headers=auth["she"]).content.startswith(b"%PDF")
-    assert client.get(f"/incidents/{incident['id']}", headers=auth["she"]).json()["files"][0]["id"] == fid
-    # a site manager of another site can't see it; the SHE team can remove it
-    assert client.get(f"{path}/{fid}", headers=auth["admin"]).status_code == 200
+    assert client.get(f"{path}/{fid}", headers=people["mgr2"]).status_code == 403   # another site's manager
     removed = client.delete(f"{path}/{fid}", headers=auth["she"])
     assert removed.status_code == 200 and removed.json()["files"] == []
-    # with only an uploaded file as evidence, the investigation can still record its causes
-    client.post(path, files={"file": pdf}, headers=auth["mgr"])
+    # once on the team, the other site's manager can add evidence, and an uploaded file is evidence enough
     inc = f"/incidents/{incident['id']}"
-    client.put(inc, json=workflow("assigned", team_members=[{"name": "Rudo"}]), headers=auth["she"])
-    client.put(inc, json=workflow("investigating"), headers=auth["she"])
-    ok = client.put(inc, json=workflow("causes_recorded", causes=["Cause"], root_cause="Root", corrective_action="Act",
-                                       lessons_learned="Lesson"), headers=auth["she"])
+    client.put(inc, json=workflow("assigned", team_members=[{"user_id": 52}]), headers=auth["she"])
+    assert client.post(path, files={"file": pdf}, headers=people["mgr2"]).status_code == 201
+    client.put(inc, json=workflow("investigating"), headers=people["mgr2"])
+    ok = client.put(inc, json=workflow("causes_recorded", causes=["Cause"], root_cause="Root"), headers=people["mgr2"])
     assert ok.status_code == 200, ok.text
+
+
+def test_finalised_reports_from_before_are_closed(client, auth):
+    incident = create_incident(client, auth)
+    db = SessionLocal()
+    db.add(IncidentWorkflow(incident_id=incident["id"], status="report_finalised"))
+    db.commit()
+    db.close()
+    assert any("now closed" in note for note in ensure_new_columns(engine))
+    assert client.get(f"/incidents/{incident['id']}", headers=auth["she"]).json()["incident_workflow"]["status"] == "closed"
+
+
+def test_she_officer_accounts(client, auth, people):
+    made = client.post("/users/", json={"email": "inv-officer2@x.com", "password": "Officer-pass-123", "role": "she_officer",
+                                        "full_name": "Second Officer"}, headers=auth["admin"])
+    assert made.status_code == 200, made.text
+    assert made.json()["role"] == "she_officer"
+    db = SessionLocal()
+    db.query(User).filter(User.email == "inv-officer2@x.com").delete()
+    db.commit()
+    db.close()
+    # a SHE officer does what the SHE team does, such as sharing SHE files and recording trainings
+    assert client.get("/she-files/", headers=people["officer"]).status_code == 200

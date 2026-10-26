@@ -24,5 +24,7 @@ class CorrectiveAction(Base):
     is_successful = Column(String, nullable=True)  # "yes" | "no"
     # set when the action was opened for an inspection non-conformity (managed from the inspection)
     nc_id = Column(Integer, nullable=True, index=True)
+    # hierarchy of control from the incident form: elimination, substitution, isolation, redesign, administration, ppe
+    control = Column(String(30), nullable=True)
 
     incident = relationship("Incident", back_populates="corrective_actions")
