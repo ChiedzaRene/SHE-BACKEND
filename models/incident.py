@@ -40,7 +40,8 @@ class Incident(Base):
         """Evidence files (without their contents)."""
         from services.files import is_viewable
         return [{"id": f.id, "filename": f.filename, "content_type": f.content_type, "size": f.size,
-                 "viewable": is_viewable(f.filename)} for f in self._files]
+                 "viewable": is_viewable(f.filename), "uploaded_by": f.uploaded_by,
+                 "created_at": f.created_at} for f in self._files]
 
     @property
     def incident_workflow(self):

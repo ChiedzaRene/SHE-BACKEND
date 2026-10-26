@@ -129,6 +129,7 @@ def test_evidence_files(client, auth):
     files = added.json()["files"]
     assert len(files) == 1 and files[0]["filename"] == "statement.pdf" and files[0]["viewable"] is True
     fid = files[0]["id"]
+    assert files[0]["uploaded_by"] is not None   # the app offers removal to the uploader
     assert client.get(f"{path}/{fid}", headers=auth["she"]).content.startswith(b"%PDF")
     assert client.get(f"/incidents/{incident['id']}", headers=auth["she"]).json()["files"][0]["id"] == fid
     # a site manager of another site can't see it; the SHE team can remove it
