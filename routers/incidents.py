@@ -25,12 +25,14 @@ router = APIRouter(prefix="/incidents", tags=["Incidents"])
 PeriodQuery = Query("12m", pattern="^(12m|ytd)$", description="Rolling 12 months or year to date")
 WORKFLOW_ROLES = {"super_admin", "admin", "she_team", "she_officer"}
 # The order of Glow's Incident Investigation Report Form (GP-SHE/SPR/02/01):
-# the site reports it; SHE assign an investigation team; the team investigates and logs the causes;
-# SHE assign the corrective actions; SHE close it with the lessons learnt, report type and comments.
-WORKFLOW_STAGES = ("reported", "assigned", "investigating", "causes_recorded", "actions_assigned", "closed")
+# the site reports it (description, causes, evidence) to SHE; SHE assemble the investigation team; the team
+# logs its findings; SHE record the root cause; SHE assign the corrective actions (hierarchy of control);
+# once those actions are closed, SHE close it with the lessons learnt, report type and comments.
+WORKFLOW_STAGES = ("reported", "assigned", "investigating", "findings_recorded", "root_cause_recorded",
+                   "actions_assigned", "closed")
 # What a team member who is not in the SHE team may record
-TEAM_FIELDS = {"status", "evidence", "witness_reports", "sketches", "causes", "root_cause"}
-TEAM_STAGES = {"investigating", "causes_recorded"}
+TEAM_FIELDS = {"status", "evidence", "witness_reports", "sketches"}
+TEAM_STAGES = {"investigating", "findings_recorded"}
 # Who can be put on an investigation team (operations and directors only read)
 INVESTIGATOR_ROLES = ("she_officer", "she_team", "admin", "super_admin", "regional_manager", "site_manager")
 
@@ -77,16 +79,20 @@ def _validate_workflow(db: Session, incident: Incident, workflow: IncidentWorkfl
         raise HTTPException(status_code=409, detail=f"Invalid workflow transition from {workflow.status} to {next_stage}")
     if next_stage == "assigned" and not changes.get("team_members", workflow.team_members):
         raise HTTPException(status_code=422, detail="Choose at least one person for the investigation team")
-    if next_stage == "causes_recorded":
-        causes = changes.get("causes", workflow.causes)
-        # the site's own evidence (reported with the incident) and uploaded files count too
-        evidence = (changes.get("evidence", workflow.evidence) or (incident.incident_intake or {}).get("evidence")
-                    or incident._files)
-        if not (evidence and causes and len(causes) <= 3 and changes.get("root_cause", workflow.root_cause)):
-            raise HTTPException(status_code=422, detail="Evidence, one to three causes and the root cause are required")
-    if next_stage == "actions_assigned" and not _incident_actions(db, incident):
+    if next_stage == "findings_recorded" and not (changes.get("evidence", workflow.evidence) or "").strip():
+        raise HTTPException(status_code=422, detail="Write down what the investigation found")
+    if next_stage == "root_cause_recorded":
+        # the causes the site reported count until SHE confirm or change them
+        causes = changes.get("causes", workflow.causes) or (incident.incident_intake or {}).get("site_causes")
+        if not (causes and len(causes) <= 3 and changes.get("root_cause", workflow.root_cause)):
+            raise HTTPException(status_code=422, detail="One to three causes and the root cause are required")
+    actions = _incident_actions(db, incident) if next_stage in ("actions_assigned", "closed") else []
+    if next_stage == "actions_assigned" and not actions:
         raise HTTPException(status_code=422, detail="Assign at least one corrective action first")
     if next_stage == "closed":
+        still_open = [a for a in actions if not _action_closed(a)]
+        if still_open:
+            raise HTTPException(status_code=422, detail=f"Close the corrective actions first ({len(still_open)} still open)")
         missing = [label for key, label in (("lessons_learned", "lessons learnt"), ("report_type", "a report type"),
                                             ("she_comment", "the SHE Officer's comment"))
                    if not changes.get(key, getattr(workflow, key))]
@@ -94,6 +100,10 @@ def _validate_workflow(db: Session, incident: Incident, workflow: IncidentWorkfl
             missing.append("the Operations Manager's comment (fatal incident)")
         if missing:
             raise HTTPException(status_code=422, detail="Before closing, record " + ", ".join(missing))
+
+
+def _action_closed(action: CorrectiveAction) -> bool:
+    return action.is_successful == "yes" or (action.status or "").lower() in ("resolved", "closed")
 
 
 def _parse_day(value):
@@ -134,14 +144,15 @@ def _team_from_accounts(db: Session, changes: dict) -> None:
 def _apply_workflow(incident: Incident, workflow_data, user: User, request: Request, db: Session) -> None:
     changes = workflow_data if isinstance(workflow_data, dict) else workflow_data.model_dump(exclude_unset=True)
     if user.role == "operations":
-        if set(changes) != {"operations_manager_comment"} or not _is_fatal(incident):
-            raise HTTPException(status_code=403, detail="Operations Managers may only comment on fatal incidents")
+        # the Operations Manager comments when necessary (always on fatal incidents), and changes nothing else
+        if set(changes) != {"operations_manager_comment"}:
+            raise HTTPException(status_code=403, detail="Operations Managers may only add their comment")
     elif user.role not in WORKFLOW_ROLES:
         # the investigation team records what they find: evidence, causes and the root cause
         if not _on_team(incident, user):
             raise HTTPException(status_code=403, detail="Only the SHE team and the investigation team may update the investigation")
         if set(changes) - TEAM_FIELDS or changes.get("status", "investigating") not in TEAM_STAGES:
-            raise HTTPException(status_code=403, detail="The investigation team records the evidence and causes; the SHE team does the rest")
+            raise HTTPException(status_code=403, detail="The investigation team records its findings; the SHE team does the rest")
     workflow = incident._workflow
     if workflow is None:
         workflow = IncidentWorkflow(incident_id=incident.id)
@@ -154,6 +165,8 @@ def _apply_workflow(incident: Incident, workflow_data, user: User, request: Requ
         _validate_workflow(db, incident, workflow, changes)
     for key, value in changes.items():
         setattr(workflow, key, value)
+    if changes.get("status") == "root_cause_recorded" and not workflow.causes:
+        workflow.causes = list((incident.incident_intake or {}).get("site_causes") or [])[:3]
     if changes.get("status") == "actions_assigned":
         actions = _incident_actions(db, incident)
         workflow.corrective_action = "\n".join(a.action_taken for a in actions)
@@ -182,8 +195,8 @@ def _tell_people(db: Session, incident: Incident, actor: User, previous: str, wo
            title=f"You are on the investigation team for INC-{incident.id} at {where}",
            message=f"{who(actor)} assigned you to investigate: {short(incident.description)}",
            link="/incidents", resource="incidents", resource_id=incident.id, actor=actor)
-    if workflow.status != previous and workflow.status in ("causes_recorded", "closed"):
-        done = "The causes were recorded" if workflow.status == "causes_recorded" else "The investigation was closed"
+    if workflow.status != previous and workflow.status in ("findings_recorded", "closed"):
+        done = "The investigation's findings were recorded" if workflow.status == "findings_recorded" else "The investigation was closed"
         notify(db, team(db) + (site_managers(db, incident.site_id) if workflow.status == "closed" else []),
                kind="incident_stage", title=f"INC-{incident.id} at {where}: {done.lower()}",
                message=f"{done} by {who(actor)}.",
@@ -398,7 +411,7 @@ def update_incident(
     if workflow_data is not None:
         _apply_workflow(incident, workflow_data, current_user, request, db)
     if current_user.role == "operations" and (intake is not None or changes):
-        raise HTTPException(status_code=403, detail="Operations Managers may only comment on fatal incidents")
+        raise HTTPException(status_code=403, detail="Operations Managers may only add their comment")
     if intake is not None:
         if current_user.role != "site_manager" and current_user.role not in WORKFLOW_ROLES:
             raise HTTPException(status_code=403, detail="You don't have permission to update incident intake")
