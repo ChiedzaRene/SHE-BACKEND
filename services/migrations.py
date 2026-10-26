@@ -35,6 +35,10 @@ NEW_COLUMNS = {
         ("action_plan", "TEXT"),
         ("incident_intake", "JSON NOT NULL DEFAULT '{}'"),
     ],
+    "incident_workflows": [
+        ("team_members", "JSON"),
+        ("action_items", "JSON"),
+    ],
     "site_hours": [
         ("workers", "INTEGER"),
     ],
