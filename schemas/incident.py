@@ -95,9 +95,39 @@ class IncidentResponse(BaseModel):
     action_plan: Optional[str] = None
     incident_intake: Dict[str, Any] = Field(default_factory=dict)
     incident_workflow: "IncidentWorkflowResponse" = Field(default_factory=lambda: IncidentWorkflowResponse())
+    files: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
+
+
+class TeamMember(BaseModel):
+    """A row of the form's INVESTIGATION TEAM table."""
+    name: str = Field("", max_length=150)  # blank rows (an empty line of the table) are dropped
+    job_title: Optional[str] = Field(None, max_length=150)
+    date: Optional[str] = Field(None, max_length=20)
+
+    @field_validator("name", "job_title", "date", mode="before")
+    @classmethod
+    def clean(cls, value):
+        return sanitize_text(value)
+
+
+# The form's hierarchy of control, most effective first
+CONTROLS = Literal["elimination", "substitution", "isolation", "redesign", "administration", "ppe"]
+
+
+class ActionItem(BaseModel):
+    """A row of the form's CORRECTIVE ACTION table."""
+    action: str = Field("", max_length=2000)  # blank rows are dropped
+    control: Optional[CONTROLS] = None
+    by_whom: Optional[str] = Field(None, max_length=150)
+    by_when: Optional[str] = Field(None, max_length=20)
+
+    @field_validator("action", "by_whom", "by_when", mode="before")
+    @classmethod
+    def clean(cls, value):
+        return sanitize_text(value)
 
 
 REPORT_TYPES = Literal[
@@ -112,6 +142,7 @@ class IncidentWorkflowUpdate(BaseModel):
     status: Optional[Literal["reported", "assigned", "investigating", "causes_recorded", "closed", "report_finalised"]] = None
     investigation_team: Optional[str] = Field(None, max_length=5000)
     team_details: Optional[str] = Field(None, max_length=5000)
+    team_members: Optional[List[TeamMember]] = Field(None, max_length=20)
     assignment_date: Optional[datetime] = None
     evidence: Optional[str] = Field(None, max_length=10000)
     witness_reports: Optional[str] = Field(None, max_length=10000)
@@ -123,6 +154,7 @@ class IncidentWorkflowUpdate(BaseModel):
     causes: Optional[List[str]] = Field(None, max_length=3)
     root_cause: Optional[str] = Field(None, max_length=10000)
     corrective_action: Optional[str] = Field(None, max_length=10000)
+    action_items: Optional[List[ActionItem]] = Field(None, max_length=20)
     responsible_person: Optional[str] = Field(None, max_length=255)
     due_date: Optional[datetime] = None
     lessons_learned: Optional[str] = Field(None, max_length=10000)
@@ -144,6 +176,8 @@ class IncidentWorkflowResponse(BaseModel):
     status: str = "reported"
     investigation_team: Optional[str] = None
     team_details: Optional[str] = None
+    team_members: Optional[List[Dict[str, Any]]] = None
+    action_items: Optional[List[Dict[str, Any]]] = None
     assignment_date: Optional[datetime] = None
     evidence: Optional[str] = None
     witness_reports: Optional[str] = None

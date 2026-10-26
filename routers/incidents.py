@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 import json
 from datetime import datetime
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer
 from database import get_db
 from models.incident import Incident
+from models.incident_file import IncidentFile
 from models.incident_workflow import IncidentWorkflow
 from models.site import Site
 from models.user import User
@@ -13,6 +14,7 @@ from services.access import assert_site_access, assert_site_visible, region_site
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 from services.audit_service import log_action
+from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.notifications import notify, short, site_managers, site_name, team, who
 from services.safety_metrics import combine, compute_by_site
 from typing import List
@@ -52,8 +54,11 @@ def _validate_workflow(incident: Incident, workflow: IncidentWorkflow, changes: 
         raise HTTPException(status_code=422, detail="Team members, team details and assignment date are required")
     if next_stage in ("causes_recorded", "closed", REPORT_FINALISED):
         causes = changes.get("causes", workflow.causes)
+        # the site's own evidence (reported with the incident) and uploaded files count too
+        evidence = (changes.get("evidence", workflow.evidence) or (incident.incident_intake or {}).get("evidence")
+                    or incident._files)
         required = (
-            changes.get("evidence", workflow.evidence),
+            evidence,
             causes and len(causes) <= 3,
             changes.get("root_cause", workflow.root_cause),
             changes.get("corrective_action", workflow.corrective_action),
@@ -66,6 +71,46 @@ def _validate_workflow(incident: Incident, workflow: IncidentWorkflow, changes: 
             raise HTTPException(status_code=422, detail="report_type is required before finalisation")
         if _is_fatal(incident) and not changes.get("operations_manager_comment", workflow.operations_manager_comment):
             raise HTTPException(status_code=422, detail="Operations Manager comments are required for fatal incidents")
+
+
+def _parse_day(value):
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
+
+
+CONTROL_LABELS = {"elimination": "Elimination", "substitution": "Substitution", "isolation": "Isolate",
+                  "redesign": "Redesign", "administration": "Administration", "ppe": "PPE"}
+
+
+def _from_form_tables(changes: dict) -> None:
+    """The form's tables (team rows, corrective-action rows) also fill the matching summary fields."""
+    members = [m for m in (changes.get("team_members") or []) if (m.get("name") or "").strip()]
+    if "team_members" in changes:
+        changes["team_members"] = members
+    if members:
+        changes.setdefault("investigation_team", "; ".join(
+            f"{m['name']} ({m['job_title']})" if m.get("job_title") else m["name"] for m in members))
+        changes.setdefault("team_details", "; ".join(
+            ", ".join(p for p in (m["name"], m.get("job_title"), m.get("date")) if p) for m in members))
+        days = [d for d in (_parse_day(m.get("date")) for m in members) if d]
+        if not changes.get("assignment_date"):
+            changes["assignment_date"] = min(days) if days else datetime.utcnow()
+    items = [a for a in (changes.get("action_items") or []) if (a.get("action") or "").strip()]
+    if "action_items" in changes:
+        changes["action_items"] = items
+    if items:
+        changes.setdefault("corrective_action", "\n".join(
+            a["action"] + (f" [{CONTROL_LABELS.get(a.get('control'), a.get('control'))}]" if a.get("control") else "")
+            + (f" by {a['by_whom']}" if a.get("by_whom") else "") + (f", by {a['by_when']}" if a.get("by_when") else "")
+            for a in items))
+        owners = [a["by_whom"] for a in items if a.get("by_whom")]
+        if owners:
+            changes.setdefault("responsible_person", ", ".join(dict.fromkeys(owners)))
+        dues = [d for d in (_parse_day(a.get("by_when")) for a in items) if d]
+        if dues:
+            changes.setdefault("due_date", max(dues))
 
 
 def _apply_workflow(incident: Incident, workflow_data, user: User, request: Request, db: Session) -> None:
@@ -81,6 +126,7 @@ def _apply_workflow(incident: Incident, workflow_data, user: User, request: Requ
         db.add(workflow)
         db.flush()
     previous = workflow.status
+    _from_form_tables(changes)
     if user.role != "operations":
         _validate_workflow(incident, workflow, changes)
     for key, value in changes.items():
@@ -305,3 +351,82 @@ def update_incident(
                    ip_address=request.client.host)
     return incident
 
+
+
+# ---- Evidence files: documents, witness or victim reports, pictures, sketch diagrams ----
+
+EVIDENCE_ROLES = WORKFLOW_ROLES | {"site_manager"}
+
+
+def _incident_for_files(db: Session, user: User, incident_id: int) -> Incident:
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    assert_site_visible(db, user, incident.site_id)
+    return incident
+
+
+@router.post("/{incident_id}/files", response_model=IncidentResponse, status_code=201)
+async def add_evidence(
+    request: Request,
+    incident_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Attach a piece of evidence. The site does so while reporting; the SHE team at any stage."""
+    incident = _incident_for_files(db, current_user, incident_id)
+    if current_user.role not in EVIDENCE_ROLES:
+        raise HTTPException(status_code=403, detail="You can't add evidence to this incident.")
+    if len(incident._files) >= 20:
+        raise HTTPException(status_code=422, detail="An incident can have up to 20 evidence files.")
+    filename, content_type = clean_filename(file)
+    data = await read_upload(file)
+    db.add(IncidentFile(incident_id=incident.id, filename=filename, content_type=content_type, size=len(data),
+                        data=data, uploaded_by=current_user.id))
+    db.commit()
+    db.refresh(incident)
+    log_action(db=db, user=current_user, action="UPDATE_INCIDENT", resource="incidents", resource_id=incident.id,
+               details=f"Added evidence {filename} to incident #{incident.id}",
+               ip_address=request.client.host if request.client else None)
+    return incident
+
+
+@router.get("/{incident_id}/files/{file_id}")
+def get_evidence(
+    incident_id: int,
+    file_id: int,
+    download: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _incident_for_files(db, current_user, incident_id)
+    f = (db.query(IncidentFile).options(undefer(IncidentFile.data))
+         .filter(IncidentFile.id == file_id, IncidentFile.incident_id == incident_id).first())
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    kind = "inline" if is_viewable(f.filename) and not download else "attachment"
+    return file_response(f.data, f.content_type, f.filename, kind)
+
+
+@router.delete("/{incident_id}/files/{file_id}", response_model=IncidentResponse)
+def remove_evidence(
+    request: Request,
+    incident_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    incident = _incident_for_files(db, current_user, incident_id)
+    f = db.query(IncidentFile).filter(IncidentFile.id == file_id, IncidentFile.incident_id == incident_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    if current_user.role not in WORKFLOW_ROLES and f.uploaded_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the person who added this file or the SHE team can remove it.")
+    db.delete(f)
+    db.commit()
+    db.refresh(incident)
+    log_action(db=db, user=current_user, action="UPDATE_INCIDENT", resource="incidents", resource_id=incident.id,
+               details=f"Removed evidence {f.filename} from incident #{incident.id}",
+               ip_address=request.client.host if request.client else None)
+    return incident

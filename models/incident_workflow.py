@@ -11,6 +11,9 @@ class IncidentWorkflow(Base):
     incident_id = Column(Integer, ForeignKey("incidents.id", ondelete="CASCADE"), unique=True, nullable=False)
     status = Column(String(40), nullable=False, default="reported", server_default="reported")
     investigation_team = Column(Text, nullable=True)
+    # the form's tables: [{name, job_title, date}] and [{action, control, by_whom, by_when}]
+    team_members = Column(JSON, nullable=True)
+    action_items = Column(JSON, nullable=True)
     team_details = Column(Text, nullable=True)
     assignment_date = Column(DateTime, nullable=True)
     evidence = Column(Text, nullable=True)
