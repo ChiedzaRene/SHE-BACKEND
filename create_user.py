@@ -20,7 +20,7 @@ from database import SessionLocal
 from models.user import User
 from services.auth_services import hash_password
 
-ROLES = ("site_manager", "she_team", "admin", "super_admin")
+ROLES = ("site_manager", "she_team", "she_officer", "admin", "super_admin")
 
 
 def main() -> None:

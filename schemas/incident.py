@@ -102,8 +102,9 @@ class IncidentResponse(BaseModel):
 
 
 class TeamMember(BaseModel):
-    """A row of the form's INVESTIGATION TEAM table."""
-    name: str = Field("", max_length=150)  # blank rows (an empty line of the table) are dropped
+    """A row of the form's INVESTIGATION TEAM table. Team members are people with accounts."""
+    user_id: Optional[int] = Field(None, gt=0)  # rows without a person are dropped
+    name: str = Field("", max_length=150)  # filled in from the account
     job_title: Optional[str] = Field(None, max_length=150)
     date: Optional[str] = Field(None, max_length=20)
 
@@ -139,7 +140,7 @@ REPORT_TYPES = Literal[
 
 
 class IncidentWorkflowUpdate(BaseModel):
-    status: Optional[Literal["reported", "assigned", "investigating", "causes_recorded", "closed", "report_finalised"]] = None
+    status: Optional[Literal["reported", "assigned", "investigating", "causes_recorded", "actions_assigned", "closed"]] = None
     investigation_team: Optional[str] = Field(None, max_length=5000)
     team_details: Optional[str] = Field(None, max_length=5000)
     team_members: Optional[List[TeamMember]] = Field(None, max_length=20)
@@ -159,8 +160,17 @@ class IncidentWorkflowUpdate(BaseModel):
     due_date: Optional[datetime] = None
     lessons_learned: Optional[str] = Field(None, max_length=10000)
     report_type: Optional[REPORT_TYPES] = None
+    report_dates: Optional[Dict[REPORT_TYPES, Optional[str]]] = None
+    report_revised: Optional[bool] = None
     she_comment: Optional[str] = Field(None, max_length=10000)
     operations_manager_comment: Optional[str] = Field(None, max_length=10000)
+
+    @field_validator("report_dates")
+    @classmethod
+    def clean_report_dates(cls, value):
+        if value is None:
+            return value
+        return {k: (str(v)[:10] if v else None) for k, v in value.items()}
 
     @field_validator(
         "investigation_team", "team_details", "evidence", "witness_reports", "sketches", "costs",
@@ -195,6 +205,8 @@ class IncidentWorkflowResponse(BaseModel):
     closed_at: Optional[datetime] = None
     closed_by_id: Optional[int] = None
     report_type: Optional[REPORT_TYPES] = None
+    report_dates: Optional[Dict[str, Optional[str]]] = None
+    report_revised: bool = False
     she_comment: Optional[str] = None
     operations_manager_comment: Optional[str] = None
 

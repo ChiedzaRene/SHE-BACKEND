@@ -23,7 +23,7 @@ from services.licences import LICENCE_TYPES, send_reminders, status_of
 
 router = APIRouter(prefix="/licences", tags=["Licences"])
 
-EDITORS = ("she_team", "admin", "super_admin", "site_manager")
+EDITORS = ("she_team", "she_officer", "admin", "super_admin", "site_manager")
 
 
 def _out(lic: SiteLicence, today: date, names: dict) -> dict:
@@ -184,7 +184,7 @@ def correct_licence(
 
 @router.delete("/{licence_id}")
 def delete_licence(request: Request, licence_id: int, db: Session = Depends(get_db),
-                   current_user: User = Depends(require_role("she_team", "admin", "super_admin"))):
+                   current_user: User = Depends(require_role("she_team", "she_officer", "admin", "super_admin"))):
     lic = db.query(SiteLicence).filter(SiteLicence.id == licence_id).first()
     if not lic:
         raise HTTPException(status_code=404, detail="Licence not found")

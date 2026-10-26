@@ -92,7 +92,7 @@ def update_audit(
     audit_id: int,
     audit_data: AuditUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "she_team")),
+    current_user: User = Depends(require_role("admin", "she_team", "she_officer")),
 ):
     audit = db.query(Audit).filter(Audit.id == audit_id).first()
     if not audit:

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, false
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -11,7 +11,8 @@ class IncidentWorkflow(Base):
     incident_id = Column(Integer, ForeignKey("incidents.id", ondelete="CASCADE"), unique=True, nullable=False)
     status = Column(String(40), nullable=False, default="reported", server_default="reported")
     investigation_team = Column(Text, nullable=True)
-    # the form's tables: [{name, job_title, date}] and [{action, control, by_whom, by_when}]
+    # the form's tables: [{user_id, name, job_title, date}] (team members have accounts)
+    # and [{action, control, by_whom, by_when}] (older records; corrective actions are now their own records)
     team_members = Column(JSON, nullable=True)
     action_items = Column(JSON, nullable=True)
     team_details = Column(Text, nullable=True)
@@ -32,6 +33,9 @@ class IncidentWorkflow(Base):
     closed_at = Column(DateTime, nullable=True)
     closed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     report_type = Column(String(60), nullable=True)
+    # the form's REPORT TYPE box: {report type: date} for each ticked, and whether it revises an earlier report
+    report_dates = Column(JSON, nullable=True)
+    report_revised = Column(Boolean, nullable=False, default=False, server_default=false())
     she_comment = Column(Text, nullable=True)
     operations_manager_comment = Column(Text, nullable=True)
 

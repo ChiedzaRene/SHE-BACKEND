@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.corrective_action import CorrectiveAction
+from models.incident import Incident
 from models.site import Site
 from models.site_inspection import InspectionNC
 from models.user import User
@@ -71,6 +72,8 @@ def _to_response(action: CorrectiveAction) -> dict:
         "resolved_by": action.resolved_by,
         "is_successful": action.is_successful,
         "nc_id": action.nc_id,
+        "control": action.control,
+        "incident_description": action.incident.description if action.incident_id and action.incident else None,
     }
 
 
@@ -135,7 +138,19 @@ def create_corrective_action(
     if current_user.role == "site_manager" and payload.get("site_id") != current_user.site_id:
         raise HTTPException(status_code=403, detail="Cannot assign corrective action to another site")
 
+    if payload.get("incident_id"):
+        # the SHE team assigns an incident's corrective actions once its causes are known
+        from routers.incidents import WORKFLOW_ROLES
+        incident = db.query(Incident).filter(Incident.id == payload["incident_id"]).first()
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        if current_user.role not in WORKFLOW_ROLES:
+            raise HTTPException(status_code=403, detail="Only the SHE team assigns an incident's corrective actions")
+        payload["site_id"] = incident.site_id
+
     description = payload.get("description") or payload.get("action_taken")
+    if not description or not payload.get("assigned_to"):
+        raise HTTPException(status_code=422, detail="Say what is to be done and who is to do it")
 
     new_action = CorrectiveAction(
         incident_id=payload.get("incident_id"),
@@ -146,6 +161,7 @@ def create_corrective_action(
         priority=payload.get("priority", "medium"),
         status=payload.get("status", "open"),
         due_date=payload.get("due_date"),
+        control=payload.get("control"),
     )
 
     db.add(new_action)
@@ -226,7 +242,7 @@ def update_corrective_action(
     if "description" in updates and "action_taken" not in updates:
         updates["action_taken"] = updates.pop("description")
 
-    allowed_fields = {"assigned_to", "action_taken", "status", "due_date", "date_resolved", "designation", "priority"}
+    allowed_fields = {"assigned_to", "action_taken", "status", "due_date", "date_resolved", "designation", "priority", "control"}
     previous_assignee = (action.assigned_to or "").strip().lower()
     for key, value in updates.items():
         if key in allowed_fields:
@@ -254,7 +270,7 @@ def delete_corrective_action(
     request: Request,
     action_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "she_team")),
+    current_user: User = Depends(require_role("admin", "she_team", "she_officer")),
 ):
     action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
     if not action:

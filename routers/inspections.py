@@ -178,7 +178,7 @@ def delete_inspection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "she_team", "super_admin"):
+    if current_user.role not in ("admin", "she_team", "she_officer", "super_admin"):
         raise HTTPException(status_code=403, detail="Access denied")
     inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
     if not inspection:
