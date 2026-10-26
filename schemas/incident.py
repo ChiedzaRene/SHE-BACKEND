@@ -140,7 +140,8 @@ REPORT_TYPES = Literal[
 
 
 class IncidentWorkflowUpdate(BaseModel):
-    status: Optional[Literal["reported", "assigned", "investigating", "causes_recorded", "actions_assigned", "closed"]] = None
+    status: Optional[Literal["reported", "assigned", "investigating", "findings_recorded", "root_cause_recorded",
+                             "actions_assigned", "closed"]] = None
     investigation_team: Optional[str] = Field(None, max_length=5000)
     team_details: Optional[str] = Field(None, max_length=5000)
     team_members: Optional[List[TeamMember]] = Field(None, max_length=20)

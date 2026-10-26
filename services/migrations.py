@@ -104,4 +104,10 @@ def ensure_new_columns(engine) -> list:
                 "UPDATE incident_workflows SET status = 'closed' WHERE status = 'report_finalised'")).rowcount
         if moved:
             added.append(f"incident_workflows: {moved} finalised report(s) now closed")
+        # "causes recorded" (team logged causes and root cause) became "root cause recorded" (SHE record it)
+        with ddl_transaction(engine) as connection:
+            renamed = connection.execute(text(
+                "UPDATE incident_workflows SET status = 'root_cause_recorded' WHERE status = 'causes_recorded'")).rowcount
+        if renamed:
+            added.append(f"incident_workflows: {renamed} record(s) now at root cause recorded")
     return added
