@@ -89,16 +89,20 @@ def test_operations_and_directors_can_read_everything_but_change_nothing(client,
 
 
 def test_incident_description_is_fixed_and_the_action_plan_is_separate(client, auth):
+    # the action plan is the SHE team's (it comes with the corrective actions), not the site's
+    refused = client.post("/incidents/", json={"site_id": 1, "type": "spill", "description": "Diesel spill at pump 2",
+                                               "severity": "low", "action_plan": "Absorb and dispose"}, headers=auth["mgr"])
+    assert refused.status_code == 403
     r = client.post("/incidents/", json={"site_id": 1, "type": "spill", "description": "Diesel spill at pump 2",
-                                         "severity": "low", "action_plan": "Absorb and dispose"}, headers=auth["mgr"])
+                                         "severity": "low"}, headers=auth["mgr"])
     assert r.status_code in (200, 201), r.text
     inc = r.json()
-    assert inc["action_plan"] == "Absorb and dispose"
     changed = client.put(f"/incidents/{inc['id']}", json={"description": "Something else"}, headers=auth["she"])
     assert changed.status_code == 409 and "can't be changed" in changed.json()["detail"]
+    assert client.put(f"/incidents/{inc['id']}", json={"action_plan": "Absorb"}, headers=auth["mgr"]).status_code == 403
     ok = client.put(f"/incidents/{inc['id']}", json={"description": "Diesel spill at pump 2",
                                                      "action_plan": "Absorb, dispose and retrain the attendant"},
-                    headers=auth["mgr"])
+                    headers=auth["she"])
     assert ok.status_code == 200 and ok.json()["description"] == "Diesel spill at pump 2"
     assert ok.json()["action_plan"] == "Absorb, dispose and retrain the attendant"
     # leave the shared test data as it was (other tests count site 1's incidents)

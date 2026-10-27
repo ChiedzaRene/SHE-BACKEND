@@ -2,6 +2,7 @@
 
 Everything else (scripts, styles, links, attributes) is stripped, so it is safe to show as HTML.
 """
+import html as html_lib
 import re
 from typing import Optional
 
@@ -18,6 +19,18 @@ def clean_html(value: Optional[str], max_length: int = 20000) -> Optional[str]:
     if not plain_text(html):
         return None
     return html[:max_length]
+
+
+def as_text(value: Optional[str]) -> str:
+    """Formatted (or older plain) text as plain words, with characters such as & and < as typed."""
+    return html_lib.unescape(plain_text(value)) if value else ""
+
+
+def as_safe_html(value: Optional[str]) -> Optional[str]:
+    """Stored text ready to show as HTML. Older plain text keeps its line breaks; anything else is cleaned again."""
+    if not value:
+        return None
+    return clean_html(str(value).replace("\r\n", "\n").replace("\n", "<br>"))
 
 
 def plain_text(html: Optional[str]) -> str:

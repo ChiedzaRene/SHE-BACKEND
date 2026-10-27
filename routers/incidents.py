@@ -31,7 +31,7 @@ WORKFLOW_ROLES = {"super_admin", "admin", "she_team", "she_officer"}
 WORKFLOW_STAGES = ("reported", "assigned", "investigating", "findings_recorded", "root_cause_recorded",
                    "actions_assigned", "closed")
 # What a team member who is not in the SHE team may record
-TEAM_FIELDS = {"status", "evidence", "witness_reports", "sketches"}
+TEAM_FIELDS = {"status", "evidence", "witness_reports", "sketches"}  # the findings
 TEAM_STAGES = {"investigating", "findings_recorded"}
 # Who can be put on an investigation team (operations and directors only read)
 INVESTIGATOR_ROLES = ("she_officer", "she_team", "admin", "super_admin", "regional_manager", "site_manager")
@@ -81,11 +81,8 @@ def _validate_workflow(db: Session, incident: Incident, workflow: IncidentWorkfl
         raise HTTPException(status_code=422, detail="Choose at least one person for the investigation team")
     if next_stage == "findings_recorded" and not (changes.get("evidence", workflow.evidence) or "").strip():
         raise HTTPException(status_code=422, detail="Write down what the investigation found")
-    if next_stage == "root_cause_recorded":
-        # the causes the site reported count until SHE confirm or change them
-        causes = changes.get("causes", workflow.causes) or (incident.incident_intake or {}).get("site_causes")
-        if not (causes and len(causes) <= 3 and changes.get("root_cause", workflow.root_cause)):
-            raise HTTPException(status_code=422, detail="One to three causes and the root cause are required")
+    if next_stage == "root_cause_recorded" and not changes.get("root_cause", workflow.root_cause):
+        raise HTTPException(status_code=422, detail="Record the root cause")
     actions = _incident_actions(db, incident) if next_stage in ("actions_assigned", "closed") else []
     if next_stage == "actions_assigned" and not actions:
         raise HTTPException(status_code=422, detail="Assign at least one corrective action first")
@@ -100,6 +97,24 @@ def _validate_workflow(db: Session, incident: Incident, workflow: IncidentWorkfl
             missing.append("the Operations Manager's comment (fatal incident)")
         if missing:
             raise HTTPException(status_code=422, detail="Before closing, record " + ", ".join(missing))
+
+
+def _stage_at(status: str) -> int:
+    return WORKFLOW_STAGES.index(status) if status in WORKFLOW_STAGES else 0
+
+
+def _check_who_writes_what(incident: Incident, workflow: IncidentWorkflow, changes: dict, user: User) -> None:
+    """The site's causes, the team's findings and SHE's root cause are each written by their own people, in turn."""
+    if "causes" in changes:
+        raise HTTPException(status_code=403, detail="The causes are part of the site's report")
+    if "evidence" in changes or changes.get("status") == "findings_recorded":
+        if not _on_team(incident, user):
+            raise HTTPException(status_code=403, detail="Only the investigation team writes the findings")
+        if workflow.status != "investigating":
+            raise HTTPException(status_code=409, detail="The findings are written once the investigation has started, "
+                                                        "and are fixed once sent to the SHE team")
+    if "root_cause" in changes and _stage_at(workflow.status) < _stage_at("findings_recorded"):
+        raise HTTPException(status_code=409, detail="The root cause is recorded after the investigation team sends its findings")
 
 
 def _action_closed(action: CorrectiveAction) -> bool:
@@ -159,13 +174,14 @@ def _apply_workflow(incident: Incident, workflow_data, user: User, request: Requ
         db.add(workflow)
         db.flush()
     previous = workflow.status
+    _check_who_writes_what(incident, workflow, changes, user)
     before_team = _team_ids(incident)
     _team_from_accounts(db, changes)
     if user.role != "operations":
         _validate_workflow(db, incident, workflow, changes)
     for key, value in changes.items():
         setattr(workflow, key, value)
-    if changes.get("status") == "root_cause_recorded" and not workflow.causes:
+    if changes.get("status") == "root_cause_recorded":
         workflow.causes = list((incident.incident_intake or {}).get("site_causes") or [])[:3]
     if changes.get("status") == "actions_assigned":
         actions = _incident_actions(db, incident)
@@ -358,6 +374,8 @@ def create_incident(
 ):
     if current_user.role == "site_manager" and incident_data.site_id != current_user.site_id:
         raise HTTPException(status_code=403, detail="Cannot log incidents for another site")
+    if current_user.role == "site_manager" and (incident_data.action_plan or "").strip():
+        raise HTTPException(status_code=403, detail="The action plan comes with the SHE team's corrective actions")
     assert_site_visible(db, current_user, incident_data.site_id)
     new_incident = Incident(
         **incident_data.model_dump(),
@@ -423,6 +441,8 @@ def update_incident(
         raise HTTPException(status_code=409, detail="An incident's description can't be changed once it is logged. Add to the action plan instead.")
     changes.pop("description", None)
     if "action_plan" in changes:
+        if current_user.role not in WORKFLOW_ROLES:
+            raise HTTPException(status_code=403, detail="The action plan comes with the SHE team's corrective actions")
         changes["action_plan"] = (changes["action_plan"] or "").strip() or None
     for key, value in changes.items():
         setattr(incident, key, value)

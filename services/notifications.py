@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from models.notification import Notification
 from models.site import Site
 from models.user import User
+from services.richtext import as_text
 
 logger = logging.getLogger("she_portal")
 
@@ -89,7 +90,7 @@ def site_name(db: Session, site_id: Optional[int]) -> str:
 
 
 def short(text: Optional[str], limit: int = 120) -> str:
-    text = " ".join((text or "").split())
+    text = " ".join(as_text(text).split())
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 

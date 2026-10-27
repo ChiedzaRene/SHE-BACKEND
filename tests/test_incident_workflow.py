@@ -93,7 +93,7 @@ def to_actions_assigned(client, auth, people, incident):
     assert client.put(path, json=workflow("assigned", team_members=[{"user_id": 51}]), headers=auth["she"]).status_code == 200
     assert client.put(path, json=workflow("investigating"), headers=people["officer"]).status_code == 200
     assert client.put(path, json=workflow("findings_recorded", evidence="Statements"), headers=people["officer"]).status_code == 200
-    assert client.put(path, json=workflow("root_cause_recorded", causes=["Failure to use PPE"], root_cause="Inadequate training"),
+    assert client.put(path, json=workflow("root_cause_recorded", root_cause="Inadequate training"),
                       headers=auth["she"]).status_code == 200
     ca = assign_ca(client, auth["she"], incident)
     assert ca.status_code == 200
@@ -135,7 +135,11 @@ def test_the_investigation_follows_the_form(client, auth, people):
     assert incident["id"] in [i["id"] for i in client.get("/incidents/", headers=people["mgr2"]).json()]
     assert client.get(path, headers=people["mgr2"]).status_code == 200
     assert client.put(path, json={"action_plan": "x"}, headers=people["mgr2"]).status_code == 403
+    # findings: not before the investigation starts, and only by the team
+    assert client.put(path, json=workflow(evidence="too early"), headers=people["mgr2"]).status_code == 409
+    assert client.put(path, json=workflow(root_cause="too early"), headers=auth["she"]).status_code == 409
     assert client.put(path, json=workflow("investigating"), headers=people["mgr2"]).status_code == 200
+    assert client.put(path, json=workflow(evidence="SHE, not on the team"), headers=auth["she"]).status_code == 403
     # the team logs its findings; the causes, the root cause and the rest are for SHE
     assert client.put(path, json=workflow(lessons_learned="x"), headers=people["mgr2"]).status_code == 403
     assert client.put(path, json=workflow(root_cause="x"), headers=people["mgr2"]).status_code == 403
@@ -144,7 +148,10 @@ def test_the_investigation_follows_the_form(client, auth, people):
                        headers=people["mgr2"])
     assert found.status_code == 200, found.text
     assert client.put(path, json=workflow("root_cause_recorded", root_cause="x"), headers=people["mgr2"]).status_code == 403
-    # SHE record the root cause; the causes the site reported stand unless SHE change them
+    # findings are fixed once sent
+    assert client.put(path, json=workflow(evidence="changed"), headers=people["mgr2"]).status_code == 409
+    # SHE record the root cause; the causes stay the site's
+    assert client.put(path, json=workflow(causes=["Something else"]), headers=auth["she"]).status_code == 403
     assert client.put(path, json=workflow("root_cause_recorded"), headers=auth["she"]).status_code == 422
     rooted = client.put(path, json=workflow("root_cause_recorded", root_cause="Inadequate training"), headers=auth["she"])
     assert rooted.status_code == 200, rooted.text
@@ -271,3 +278,34 @@ def test_she_officer_accounts(client, auth, people):
     db.close()
     # a SHE officer does what the SHE team does, such as sharing SHE files and recording trainings
     assert client.get("/she-files/", headers=people["officer"]).status_code == 200
+
+
+def test_the_description_and_findings_keep_their_formatting_and_the_site_has_no_action_plan(client, auth, people):
+    rich = "<p><b>Slipped</b> near pump 3 &amp; hurt wrist</p><script>alert(1)</script><ul><li>first aid</li></ul>"
+    incident = create_incident(client, auth)
+    path = f"/incidents/{incident['id']}"
+    made = client.post("/incidents/", json={"site_id": 1, "type": "injury", "severity": "low", "description": rich,
+                                            "incident_intake": {}}, headers=auth["mgr"])
+    assert made.status_code == 200, made.text
+    body = made.json()
+    assert body["description"] == "Slipped near pump 3 & hurt wrist alert(1) first aid"  # plain words; tags gone
+    assert body["description_html"] == "<p><b>Slipped</b> near pump 3 &amp; hurt wrist</p>alert(1)<ul><li>first aid</li></ul>"
+    db = SessionLocal()
+    db.query(Incident).filter(Incident.id == body["id"]).update({"description": DESCRIPTION})  # cleaned up with the rest
+    db.commit()
+    db.close()
+    # too short counts the words, not the formatting
+    short = client.post("/incidents/", json={"site_id": 1, "type": "injury", "severity": "low", "description": "<b>Fell</b>"},
+                        headers=auth["mgr"])
+    assert short.status_code == 422
+    # the action plan is not the site's
+    assert client.post("/incidents/", json={"site_id": 1, "type": "injury", "severity": "low", "description": DESCRIPTION,
+                                            "action_plan": "Fix it"}, headers=auth["mgr"]).status_code == 403
+    assert client.put(path, json={"action_plan": "Fix it"}, headers=auth["mgr"]).status_code == 403
+    assert client.put(path, json={"action_plan": "Fix it"}, headers=auth["she"]).status_code == 200
+    # the findings are formatted too
+    client.put(path, json=workflow("assigned", team_members=[{"user_id": 51}]), headers=auth["she"])
+    client.put(path, json=workflow("investigating"), headers=people["officer"])
+    found = client.put(path, json=workflow(evidence="<p><i>Hose</i> left in the tank</p><img src=x onerror=1>"),
+                       headers=people["officer"])
+    assert found.json()["incident_workflow"]["evidence"] == "<p><i>Hose</i> left in the tank</p>"

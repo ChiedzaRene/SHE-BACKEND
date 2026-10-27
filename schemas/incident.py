@@ -3,7 +3,9 @@ from datetime import timedelta
 from typing import Any, Dict, List, Literal, Optional
 import html
 import bleach
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from services.richtext import as_safe_html, as_text, clean_html
 
 
 def sanitize_text(value: Optional[str]) -> Optional[str]:
@@ -20,10 +22,22 @@ def check_not_future(value: Optional[datetime]) -> Optional[datetime]:
     return value
 
 
+def rich_description(value):
+    """The description is formatted text (bold, italic, underline, lists): 5 to 3,000 characters of words."""
+    if value is None:
+        return value
+    words = len(as_text(value))
+    if words < 5:
+        raise ValueError("String should have at least 5 characters")
+    if words > 3000:
+        raise ValueError("String should have at most 3000 characters")
+    return clean_html(value)
+
+
 class IncidentCreate(BaseModel):
     site_id: int = Field(..., gt=0, description="Site ID must be a positive integer")
     type: str = Field(..., min_length=2, max_length=100)
-    description: str = Field(..., min_length=5, max_length=3000)
+    description: str = Field(..., max_length=20000)
     severity: str = Field(
         ...,
         pattern="^(Low|Medium|High|Critical|Fatal|low|medium|high|critical|fatal)$",
@@ -39,10 +53,15 @@ class IncidentCreate(BaseModel):
     action_plan: Optional[str] = Field(default=None, max_length=5000)
     incident_intake: Dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("type", "description", "severity", "injured_person", "action_plan", mode="before")
+    @field_validator("type", "severity", "injured_person", "action_plan", mode="before")
     @classmethod
     def clean_string_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
+
+    @field_validator("description")
+    @classmethod
+    def clean_description(cls, value):
+        return rich_description(value)
 
     @field_validator("occurred_at")
     @classmethod
@@ -52,7 +71,7 @@ class IncidentCreate(BaseModel):
 
 class IncidentUpdate(BaseModel):
     type: Optional[str] = Field(default=None, min_length=2, max_length=100)
-    description: Optional[str] = Field(default=None, min_length=5, max_length=3000)
+    description: Optional[str] = Field(default=None, max_length=20000)
     severity: Optional[str] = Field(
         default=None,
         pattern="^(Low|Medium|High|Critical|Fatal|low|medium|high|critical|fatal)$",
@@ -68,10 +87,15 @@ class IncidentUpdate(BaseModel):
     incident_intake: Optional[Dict[str, Any]] = None
     incident_workflow: Optional["IncidentWorkflowUpdate"] = None
 
-    @field_validator("type", "description", "severity", "injured_person", "action_plan", mode="before")
+    @field_validator("type", "severity", "injured_person", "action_plan", mode="before")
     @classmethod
     def clean_string_inputs(cls, value: Optional[str]) -> Optional[str]:
         return sanitize_text(value)
+
+    @field_validator("description")
+    @classmethod
+    def clean_description(cls, value):
+        return rich_description(value)
 
     @field_validator("occurred_at")
     @classmethod
@@ -96,6 +120,14 @@ class IncidentResponse(BaseModel):
     incident_intake: Dict[str, Any] = Field(default_factory=dict)
     incident_workflow: "IncidentWorkflowResponse" = Field(default_factory=lambda: IncidentWorkflowResponse())
     files: List[Dict[str, Any]] = Field(default_factory=list)
+    # the description as formatted (cleaned) HTML; `description` itself is the plain words
+    description_html: Optional[str] = None
+
+    @model_validator(mode="after")
+    def text_and_html(self):
+        self.description_html = as_safe_html(self.description)
+        self.description = as_text(self.description)
+        return self
 
     class Config:
         from_attributes = True
@@ -146,7 +178,7 @@ class IncidentWorkflowUpdate(BaseModel):
     team_details: Optional[str] = Field(None, max_length=5000)
     team_members: Optional[List[TeamMember]] = Field(None, max_length=20)
     assignment_date: Optional[datetime] = None
-    evidence: Optional[str] = Field(None, max_length=10000)
+    evidence: Optional[str] = Field(None, max_length=30000)
     witness_reports: Optional[str] = Field(None, max_length=10000)
     supporting_documents: Optional[List[Dict[str, Any]]] = None
     sketches: Optional[str] = Field(None, max_length=10000)
@@ -173,8 +205,14 @@ class IncidentWorkflowUpdate(BaseModel):
             return value
         return {k: (str(v)[:10] if v else None) for k, v in value.items()}
 
+    @field_validator("evidence")
+    @classmethod
+    def clean_findings(cls, value):
+        """The investigation's findings are formatted text."""
+        return clean_html(value, 10000) if value is not None else value
+
     @field_validator(
-        "investigation_team", "team_details", "evidence", "witness_reports", "sketches", "costs",
+        "investigation_team", "team_details", "witness_reports", "sketches", "costs",
         "damage_payer", "root_cause", "corrective_action", "responsible_person", "lessons_learned",
         "she_comment", "operations_manager_comment", mode="before"
     )
@@ -210,6 +248,11 @@ class IncidentWorkflowResponse(BaseModel):
     report_revised: bool = False
     she_comment: Optional[str] = None
     operations_manager_comment: Optional[str] = None
+
+    @field_validator("evidence")
+    @classmethod
+    def findings_as_html(cls, value):
+        return as_safe_html(value)
 
     class Config:
         from_attributes = True
