@@ -21,6 +21,7 @@ from models.site_licence import SiteLicence
 from models.site import Site
 from models.training import Training
 from services.licences import LICENCE_TYPES, status_of
+from services.richtext import as_text
 from services.settings import get_safety_limits
 from services.safety_metrics import (
     combine,
@@ -302,7 +303,7 @@ def incident_register(db: Session, site_id: Optional[int], start: Optional[date]
 
     rows = [[inc.id, names.get(inc.site_id, ""), when_val.strftime("%Y-%m-%d %H:%M") if when_val else "",
              (inc.type or "").title(), inc.injured_person or "", (inc.severity or "").title(),
-             inc.lost_time_days or 0, "Yes" if inc.resolved else "No", inc.description or ""]
+             inc.lost_time_days or 0, "Yes" if inc.resolved else "No", as_text(inc.description)]
             for inc, when_val in rows_q]
     injuries = sum(1 for r in rows if r[3].lower() == "injury")
     kpis = [("Incidents", total), ("Injuries", injuries),

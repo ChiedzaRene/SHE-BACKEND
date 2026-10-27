@@ -18,6 +18,7 @@ from schemas.corrective_action import (
 from services.audit_service import log_action
 from services.notifications import find_person, notify, short, site_managers, site_name, team, who
 from services.access import assert_site_access
+from services.richtext import as_text
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
 
@@ -73,7 +74,7 @@ def _to_response(action: CorrectiveAction) -> dict:
         "is_successful": action.is_successful,
         "nc_id": action.nc_id,
         "control": action.control,
-        "incident_description": action.incident.description if action.incident_id and action.incident else None,
+        "incident_description": as_text(action.incident.description) if action.incident_id and action.incident else None,
     }
 
 
