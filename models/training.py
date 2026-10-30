@@ -25,6 +25,8 @@ class Training(Base):
     document = deferred(Column(LargeBinary, nullable=True))
     # a training given online: the link to its recording (e.g. the OneDrive folder with the video)
     video_link = Column(String(1000), nullable=True)
+    # one training given to several sites at once: a record per site, all sharing this id
+    session_id = Column(String(36), nullable=True, index=True)
 
     site = relationship("Site")
     trainer = relationship("User")
