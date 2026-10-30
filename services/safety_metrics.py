@@ -58,7 +58,7 @@ def _counts(inc_type, severity, intake, lost_days) -> tuple:
     return recordable, lost_time
 
 
-def _rate(count: int, hours: float) -> Optional[float]:
+def rate(count: int, hours: float) -> Optional[float]:
     return round(count * RATE_BASIS_HOURS / hours, 2) if hours > 0 else None
 
 
@@ -79,7 +79,7 @@ def _empty() -> dict:
 def _finish(stats: dict) -> dict:
     stats["months_missing_hours"] = sorted(stats["months_missing_hours"])
     stats["hours_reported"] = stats["hours_worked"] > 0
-    stats["ltifr"] = _rate(stats["lost_time_injuries"], stats["hours_worked"])
+    stats["ltifr"] = rate(stats["lost_time_injuries"], stats["hours_worked"])
     return stats
 
 
