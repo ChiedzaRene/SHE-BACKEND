@@ -11,8 +11,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from database import engine, Base
+from database import SessionLocal, engine, Base
 from services.migrations import ddl_transaction, ensure_new_columns
+from services.settings import rescale_saved_limits
 from models.user import User
 from models.site import Site
 from models.incident import Incident
@@ -169,6 +170,9 @@ def prepare_database(attempts: int = 5, wait_seconds: int = 10) -> None:
             if added:
                 logger.info("Added columns: %s", ", ".join(added))
             ensure_indexes()
+            with SessionLocal() as db:
+                for note in rescale_saved_limits(db):
+                    logger.info("Safety target converted: %s", note)
             logger.info("Database ready")
             return
         except Exception as exc:  # noqa: BLE001 - reported below with a plain explanation

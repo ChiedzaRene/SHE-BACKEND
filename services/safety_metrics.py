@@ -1,9 +1,9 @@
 """LTIFR calculation. The single source of truth: every endpoint uses this.
 
-Definitions (ISO 45001 style reporting, 200,000-hour basis):
+Definitions (per 1,000,000 hours worked):
   * Recordable incident   = an incident of type "injury"
   * Lost-time injury      = a recordable incident with lost_time_days > 0
-  * LTIFR = lost-time injuries    x 200,000 / hours worked
+  * LTIFR = lost-time injuries    x 1,000,000 / hours worked
 
 Hours worked come from the monthly `site_hours` entries. Only months with hours entered
 count, for the incidents as well as the hours, so a month nobody has reported yet can't
@@ -18,9 +18,10 @@ from sqlalchemy.orm import Session
 from models.incident import Incident
 from models.site_hours import SiteHours
 
-RATE_BASIS_HOURS = 200_000
-# Warning thresholds per 200,000 hours (the dashboards and reports flag sites above these)
-LTIFR_LIMIT = 0.5
+RATE_BASIS_HOURS = 1_000_000
+# Warning threshold per 1,000,000 hours (the dashboards and reports flag sites above it).
+# 2.5 is the same as the earlier 0.5 per 200,000 hours.
+LTIFR_LIMIT = 2.5
 PERIODS = ("12m", "ytd")
 
 

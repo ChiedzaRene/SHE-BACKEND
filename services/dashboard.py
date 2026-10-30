@@ -1,6 +1,6 @@
 """Figures for the dashboards, for any period and one site or all of them.
 
-Rates are worked out for each site on its own (its injuries over its own hours, 200,000-hour basis).
+Rates are worked out for each site on its own (its injuries over its own hours, per 1,000,000 hours).
 The figure for "all sites" is the average of the sites' rates, counting only sites with hours entered.
 """
 from collections import defaultdict
