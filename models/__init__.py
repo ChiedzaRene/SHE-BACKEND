@@ -4,6 +4,8 @@ from models.incident import Incident
 from models.incident_workflow import IncidentWorkflow
 from models.incident_file import IncidentFile
 from models.corrective_action import CorrectiveAction
+from models.corrective_action_file import CorrectiveActionFile
 from models.audit import Audit
 from models.legal import Legal
 from models.training import Training
+from models.fire_inspection import FireInspection, FireInspectionFile

@@ -79,6 +79,7 @@ class TrainingResponse(BaseModel):
     document_size: Optional[int] = None
     has_document: bool = False
     document_viewable: bool = False
+    video_link: Optional[str] = None
 
     class Config:
         from_attributes = True

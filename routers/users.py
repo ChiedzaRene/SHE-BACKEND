@@ -228,7 +228,7 @@ RECORDS_BY_USER = [
     ("scorecard", "scorecards", Scorecard.submitted_by),
     ("hours entry", "hours entries", SiteHours.entered_by),
     ("shared SHE file", "shared SHE files", SheFile.uploaded_by),
-    ("toolbox talk", "toolbox talks", SafetyTalk.submitted_by),
+    ("SHE talk", "SHE talks", SafetyTalk.submitted_by),
     ("inspection report", "inspection reports", SiteInspection.created_by),
     ("licence", "licences", SiteLicence.created_by),
 ]

@@ -5,7 +5,7 @@ from database import SessionLocal
 from models.notification import Notification
 from services import licences as svc
 
-TODAY = date(2026, 10, 20)
+TODAY = date.today()  # recording a licence checks reminders against the real date, so the test must too
 
 
 def _record(client, headers, licence_type="fire_brigade", expiry=None, site_id=1, **extra):

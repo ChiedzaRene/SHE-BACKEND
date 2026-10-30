@@ -54,10 +54,16 @@ NEW_COLUMNS = {
         ("control", "VARCHAR(30)"),
     ],
     "trainings": [
+        ("video_link", "VARCHAR(1000)"),
         ("document_name", "VARCHAR(255)"),
         ("document_type", "VARCHAR(120)"),
         ("document_size", "INTEGER"),
         ("document", {"postgresql": "BYTEA", "default": "BLOB"}),
+    ],
+    # audit inspections: findings from an audit, by the SHE team or an audit team
+    "site_inspections": [
+        ("kind", "VARCHAR(20) NOT NULL DEFAULT 'she'"),
+        ("audit_body", "VARCHAR(200)"),
     ],
     # proof files attached to a whole inspection report (added after the table was first created)
     "inspection_photos": [

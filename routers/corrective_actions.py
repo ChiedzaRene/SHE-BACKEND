@@ -1,10 +1,11 @@
 from datetime import datetime
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
+from sqlalchemy.orm import Session, selectinload, undefer
 
 from database import get_db
 from models.corrective_action import CorrectiveAction
+from models.corrective_action_file import CorrectiveActionFile
 from models.incident import Incident
 from models.site import Site
 from models.site_inspection import InspectionNC
@@ -18,6 +19,7 @@ from schemas.corrective_action import (
 from services.audit_service import log_action
 from services.notifications import find_person, notify, short, site_managers, site_name, team, who
 from services.access import assert_site_access
+from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.richtext import as_text
 from services.pagination import Pagination
 from services.auth_services import get_current_user, require_role
@@ -74,6 +76,10 @@ def _to_response(action: CorrectiveAction) -> dict:
         "is_successful": action.is_successful,
         "nc_id": action.nc_id,
         "control": action.control,
+        # where the action came from: an incident (INC-<number>), an inspection NC, or raised on its own
+        "source": "incident" if action.incident_id else "inspection" if action.nc_id else "other",
+        "files": [{"id": f.id, "filename": f.filename, "content_type": f.content_type, "size": f.size,
+                   "viewable": is_viewable(f.filename), "uploaded_by": f.uploaded_by} for f in action._files],
         "incident_description": as_text(action.incident.description) if action.incident_id and action.incident else None,
     }
 
@@ -85,7 +91,7 @@ def get_all_corrective_actions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(CorrectiveAction)
+    query = db.query(CorrectiveAction).options(selectinload(CorrectiveAction._files))
     if current_user.role == "site_manager":
         query = query.filter(CorrectiveAction.site_id == current_user.site_id)
     elif current_user.role == "regional_manager":  # the sites in their region
@@ -196,6 +202,9 @@ def resolve_corrective_action(
     assert_site_access(current_user, action.site_id)
     _not_from_inspection(action)
 
+    if resolve_data.is_successful == "yes" and not action._files:
+        raise HTTPException(status_code=422,
+                            detail="Attach evidence that the action was done (a photo, PDF or document) before closing it")
     action.resolution_notes = resolve_data.resolution_notes
     action.is_successful = resolve_data.is_successful
     action.resolved_by = current_user.email
@@ -291,3 +300,85 @@ def delete_corrective_action(
         ip_address=request.client.host,
     )
     return {"message": "Corrective action deleted"}
+
+# ---- Evidence that the action was done: photos, PDFs or documents (needed to close it) ----
+
+MAX_EVIDENCE = 10
+
+
+def _action_for_files(db: Session, user: User, action_id: int) -> CorrectiveAction:
+    action = db.query(CorrectiveAction).filter(CorrectiveAction.id == action_id).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Corrective action not found")
+    assert_site_access(user, action.site_id)
+    return action
+
+
+@router.post("/{action_id}/files", response_model=CorrectiveActionResponse, status_code=201)
+async def add_action_evidence(
+    request: Request,
+    action_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    action = _action_for_files(db, current_user, action_id)
+    _not_from_inspection(action)
+    if action.is_successful == "yes":
+        raise HTTPException(status_code=409, detail="This action is closed; its evidence can no longer change")
+    if len(action._files) >= MAX_EVIDENCE:
+        raise HTTPException(status_code=422, detail=f"An action can have up to {MAX_EVIDENCE} evidence files")
+    filename, content_type = clean_filename(file)
+    data = await read_upload(file)
+    db.add(CorrectiveActionFile(action_id=action.id, filename=filename, content_type=content_type, size=len(data),
+                                data=data, uploaded_by=current_user.id))
+    db.commit()
+    db.refresh(action)
+    log_action(db=db, user=current_user, action="UPDATE_CORRECTIVE_ACTION", resource="corrective_actions",
+               resource_id=action.id, details=f"Added evidence {filename} to action #{action.id}",
+               ip_address=request.client.host if request.client else None)
+    return _to_response(action)
+
+
+@router.get("/{action_id}/files/{file_id}")
+def get_action_evidence(
+    action_id: int,
+    file_id: int,
+    download: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _action_for_files(db, current_user, action_id)
+    f = (db.query(CorrectiveActionFile).options(undefer(CorrectiveActionFile.data))
+         .filter(CorrectiveActionFile.id == file_id, CorrectiveActionFile.action_id == action_id).first())
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    kind = "inline" if is_viewable(f.filename) and not download else "attachment"
+    return file_response(f.data, f.content_type, f.filename, kind)
+
+
+@router.delete("/{action_id}/files/{file_id}", response_model=CorrectiveActionResponse)
+def remove_action_evidence(
+    request: Request,
+    action_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from routers.incidents import WORKFLOW_ROLES
+    action = _action_for_files(db, current_user, action_id)
+    if action.is_successful == "yes":
+        raise HTTPException(status_code=409, detail="This action is closed; its evidence can no longer change")
+    f = db.query(CorrectiveActionFile).filter(CorrectiveActionFile.id == file_id,
+                                              CorrectiveActionFile.action_id == action_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    if current_user.role not in WORKFLOW_ROLES and f.uploaded_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the person who added this file or the SHE team can remove it")
+    db.delete(f)
+    db.commit()
+    db.refresh(action)
+    log_action(db=db, user=current_user, action="UPDATE_CORRECTIVE_ACTION", resource="corrective_actions",
+               resource_id=action.id, details=f"Removed evidence {f.filename} from action #{action.id}",
+               ip_address=request.client.host if request.client else None)
+    return _to_response(action)

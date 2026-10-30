@@ -96,7 +96,7 @@ def test_targets_defaults_visible_to_everyone(client, auth):
     for who in ("mgr", "she", "admin"):
         r = client.get("/settings/safety-targets", headers=auth[who])
         assert r.status_code == 200
-        assert (r.json()["ltifr_limit"], r.json()["rate_basis_hours"]) == (0.5, 200000)
+        assert (r.json()["ltifr_limit"], r.json()["rate_basis_hours"]) == (2.5, 1000000)
         assert "trir_limit" not in r.json()
     assert client.get("/settings/safety-targets").status_code == 401
 
@@ -137,21 +137,21 @@ def test_changing_targets_changes_report_status_and_is_logged(client, auth):
     db.close()
     try:
         doc, rows = board()
-        assert rows["Targets Site"][5] == "2.00" and rows["Targets Site"][8] == "Action required"  # 2.00 > default 0.5
-        assert "LTIFR 0.5" in doc["notes"][0]
+        assert rows["Targets Site"][5] == "10.00" and rows["Targets Site"][8] == "Action required"  # 10.00 > default 2.5
+        assert "LTIFR 2.5 per 1,000,000 hours" in doc["notes"][0]
 
-        r = client.put("/settings/safety-targets", json={"ltifr_limit": 3.0}, headers=auth["admin"])
-        assert r.status_code == 200 and r.json()["ltifr_limit"] == 3.0
-        assert client.get("/settings/safety-targets", headers=auth["mgr"]).json()["ltifr_limit"] == 3.0
+        r = client.put("/settings/safety-targets", json={"ltifr_limit": 12.0}, headers=auth["admin"])
+        assert r.status_code == 200 and r.json()["ltifr_limit"] == 12.0
+        assert client.get("/settings/safety-targets", headers=auth["mgr"]).json()["ltifr_limit"] == 12.0
 
         doc, rows = board()
         assert rows["Targets Site"][8] == "Within limits"                      # the new limit is used by reports
-        assert "LTIFR 3" in doc["notes"][0]
+        assert "LTIFR 12" in doc["notes"][0]
 
         db = SessionLocal()
         entry = db.query(AuditLog).filter(AuditLog.action == "UPDATE_SETTINGS").order_by(AuditLog.id.desc()).first()
         db.close()
-        assert "LTIFR limit 0.5 -> 3" in entry.details
+        assert "LTIFR limit 2.5 -> 12" in entry.details
     finally:
         db = SessionLocal()
         from models.incident import Incident as I
@@ -204,3 +204,22 @@ def test_audit_log_filters_paging_and_facets(client, auth):
     assert facets["resource_labels"]["site_hours"] == "Hours worked"
     labels = [facets["action_labels"][a] for a in facets["actions"]]
     assert labels == sorted(labels, key=str.lower)                      # dropdown is A-Z by the name people read
+
+
+def test_a_limit_saved_per_200000_hours_is_converted_once_to_per_million(client):
+    from database import SessionLocal
+    from models.app_setting import AppSetting
+    from services.settings import get_safety_limits, rescale_saved_limits
+    db = SessionLocal()
+    try:
+        db.query(AppSetting).filter(AppSetting.key.in_(["ltifr_limit", "rate_basis_hours"])).delete(synchronize_session=False)
+        db.add(AppSetting(key="ltifr_limit", value="0.5"))          # saved before the change
+        db.commit()
+        assert rescale_saved_limits(db) == ["ltifr_limit 0.5 -> 2.5 (per 1,000,000 hours)"]
+        assert get_safety_limits(db)["ltifr_limit"] == 2.5
+        assert rescale_saved_limits(db) == []                        # only once
+        assert get_safety_limits(db)["ltifr_limit"] == 2.5
+    finally:
+        db.query(AppSetting).filter(AppSetting.key.in_(["ltifr_limit", "rate_basis_hours"])).delete(synchronize_session=False)
+        db.commit()
+        db.close()

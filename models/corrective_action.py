@@ -1,5 +1,7 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text
 from sqlalchemy.orm import relationship
+
+from models.corrective_action_file import CorrectiveActionFile
 from sqlalchemy.sql import func
 from database import Base
 
@@ -28,3 +30,5 @@ class CorrectiveAction(Base):
     control = Column(String(30), nullable=True)
 
     incident = relationship("Incident", back_populates="corrective_actions")
+    _files = relationship(CorrectiveActionFile, order_by=CorrectiveActionFile.id, cascade="all, delete-orphan",
+                          passive_deletes=True)

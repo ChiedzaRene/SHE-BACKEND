@@ -1,6 +1,6 @@
 """Figures for the dashboards, for any period and one site or all of them.
 
-Rates are worked out for each site on its own (its injuries over its own hours, 200,000-hour basis).
+Rates are worked out for each site on its own (its injuries over its own hours, per 1,000,000 hours).
 The figure for "all sites" is the average of the sites' rates, counting only sites with hours entered.
 """
 from collections import defaultdict
@@ -63,6 +63,14 @@ def period_range(key: str, today: Optional[date] = None):
     shift = 12 if key == "ytd" else months
     prev_start, prev_end = _add_months(start, -shift), _add_months(end, -shift)
     return (start, end), (prev_start, prev_end)
+
+
+def month_range(first: str, last: str):
+    """[start, end) for the months `first` to `last` (YYYY-MM, both included), and the same span just before."""
+    start = date(int(first[:4]), int(first[5:7]), 1)
+    end = _add_months(date(int(last[:4]), int(last[5:7]), 1), 1)
+    months = (end.year - start.year) * 12 + end.month - start.month
+    return (start, end), (_add_months(start, -months), start)
 
 
 def _label(start: date, end: date) -> str:

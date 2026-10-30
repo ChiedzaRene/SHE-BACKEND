@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
@@ -77,17 +78,29 @@ async def record_training(
     trained_employees: int = Form(..., ge=1, le=100_000),
     type: Optional[str] = Form(None, max_length=100),
     comments: Optional[str] = Form(None, max_length=2000),
-    file: UploadFile = File(...),
+    video_link: Optional[str] = Form(None, max_length=1000, description="for an online training: its recording"),
+    file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("she_team", "she_officer", "admin", "super_admin")),
 ):
-    """A training given by the SHE team (fire fighting, first aid...), with its supporting document."""
+    """A training given by the SHE team (fire fighting, first aid...), with its supporting document.
+
+    A training given online can carry the link to its recording (the OneDrive folder with the video) instead of,
+    or as well as, a document.
+    """
     if not db.query(Site.id).filter(Site.id == site_id).first():
         raise HTTPException(status_code=404, detail="Site not found")
     if training_date > local_today():
         raise HTTPException(status_code=422, detail="The training date can't be in the future.")
-    filename, content_type = clean_filename(file)
-    data = await read_upload(file)
+    link = (video_link or "").strip() or None
+    if link and not re.match(r"^https://[^\s<>\"']+$", link):
+        raise HTTPException(status_code=422, detail="The recording link must be a full https:// web address.")
+    if file is None and not link:
+        raise HTTPException(status_code=422, detail="Attach the supporting document, or give the link to the recording.")
+    filename = content_type = data = None
+    if file is not None:
+        filename, content_type = clean_filename(file)
+        data = await read_upload(file)
     module, trainer, people = (sanitize_text(v) for v in (training_module, trainer_name, personnel))
     if len(module or "") < 2 or len(trainer or "") < 2 or len(people or "") < 2:
         raise HTTPException(status_code=422, detail="Fill in the training, the trainer and the people trained.")
@@ -96,14 +109,14 @@ async def record_training(
         trained_employees=trained_employees, total_employees=trained_employees,
         date=datetime.combine(training_date, datetime.min.time()), type=sanitize_text(type) or None,
         comments=sanitize_text(comments) or None, document_name=filename, document_type=content_type,
-        document_size=len(data), document=data,
+        document_size=len(data) if data is not None else None, document=data, video_link=link,
     )
     db.add(training)
     db.commit()
     db.refresh(training)
     log_action(db=db, user=current_user, action="CREATE_TRAINING", resource="trainings", resource_id=training.id,
                details=f"Recorded \"{short(module, 80)}\" at {site_name(db, site_id)} on {training_date.isoformat()}: "
-                       f"{trained_employees} trained by {trainer} ({filename})",
+                       f"{trained_employees} trained by {trainer} ({filename or 'recording link'})",
                ip_address=request.client.host if request.client else None)
     notify(db, site_managers(db, site_id), kind="training_recorded",
            title=f"Training recorded at {site_name(db, site_id)}: {short(module, 120)}",

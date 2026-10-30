@@ -5,6 +5,7 @@ import pytest
 
 from database import SessionLocal, engine
 from models.corrective_action import CorrectiveAction
+from models.corrective_action_file import CorrectiveActionFile
 from models.incident import Incident
 from models.incident_file import IncidentFile
 from models.incident_workflow import IncidentWorkflow
@@ -51,6 +52,8 @@ def clean_workflow_test_data():
     db = SessionLocal()
     ids = [i.id for i in db.query(Incident).filter(Incident.description == DESCRIPTION).all()]
     if ids:
+        ca_ids = [a.id for a in db.query(CorrectiveAction).filter(CorrectiveAction.incident_id.in_(ids)).all()]
+        db.query(CorrectiveActionFile).filter(CorrectiveActionFile.action_id.in_(ca_ids or [0])).delete(synchronize_session=False)
         db.query(CorrectiveAction).filter(CorrectiveAction.incident_id.in_(ids)).delete(synchronize_session=False)
         db.query(IncidentFile).filter(IncidentFile.incident_id.in_(ids)).delete(synchronize_session=False)
         db.query(IncidentWorkflow).filter(IncidentWorkflow.incident_id.in_(ids)).delete(synchronize_session=False)
@@ -82,6 +85,8 @@ def assign_ca(client, headers, incident, **over):
 
 
 def close_ca(client, auth, ca_id):
+    pdf = ("done.pdf", b"%PDF-1.4 work done", "application/pdf")
+    assert client.post(f"/corrective-actions/{ca_id}/files", files={"file": pdf}, headers=auth["mgr"]).status_code == 201
     done = client.post(f"/corrective-actions/{ca_id}/resolve", json={"is_successful": "yes", "resolution_notes": "Done"},
                        headers=auth["she"])
     assert done.status_code == 200, done.text
@@ -309,3 +314,27 @@ def test_the_description_and_findings_keep_their_formatting_and_the_site_has_no_
     found = client.put(path, json=workflow(evidence="<p><i>Hose</i> left in the tank</p><img src=x onerror=1>"),
                        headers=people["officer"])
     assert found.json()["incident_workflow"]["evidence"] == "<p><i>Hose</i> left in the tank</p>"
+
+
+def test_a_corrective_action_closes_only_with_evidence(client, auth, people):
+    incident = create_incident(client, auth)
+    ca = assign_ca(client, auth["she"], incident).json()
+    assert ca["source"] == "incident" and ca["incident_id"] == incident["id"] and ca["files"] == []
+    path = f"/corrective-actions/{ca['id']}"
+    refused = client.post(f"{path}/resolve", json={"is_successful": "yes", "resolution_notes": "Done"}, headers=auth["mgr"])
+    assert refused.status_code == 422 and "evidence" in refused.json()["detail"]
+    # reviewed but not effective needs no evidence
+    assert client.post(f"{path}/resolve", json={"is_successful": "no", "resolution_notes": "Not yet"},
+                       headers=auth["mgr"]).status_code == 200
+    photo = ("alarm.png", b"\x89PNG\r\n\x1a\nfake", "image/png")
+    added = client.post(f"{path}/files", files={"file": photo}, headers=auth["mgr"])
+    assert added.status_code == 201, added.text
+    f = added.json()["files"][0]
+    assert f["filename"] == "alarm.png" and f["viewable"] is True
+    assert client.get(f"{path}/files/{f['id']}", headers=auth["she"]).content.startswith(b"\x89PNG")
+    assert client.post(f"{path}/files", files={"file": photo}, headers=people["mgr2"]).status_code == 403   # other site
+    closed = client.post(f"{path}/resolve", json={"is_successful": "yes", "resolution_notes": "Fitted"}, headers=auth["mgr"])
+    assert closed.status_code == 200 and closed.json()["status"] == "resolved"
+    # once closed, its evidence stays as it was
+    assert client.delete(f"{path}/files/{f['id']}", headers=auth["she"]).status_code == 409
+    assert client.post(f"{path}/files", files={"file": photo}, headers=auth["mgr"]).status_code == 409

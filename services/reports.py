@@ -4,7 +4,7 @@
      "tables": [{"title", "columns": [...], "rows": [[...]]}], "notes": [...]}
 
 The same document is shown on screen (JSON), exported to CSV and rendered to PDF, so the
-three can never disagree. Rates come from services.safety_metrics (200,000-hour basis).
+three can never disagree. Rates come from services.safety_metrics (per 1,000,000 hours).
 """
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -179,7 +179,7 @@ def performance_report(db: Session, site_id: Optional[int], month: Optional[str]
                                    "Open actions", "Overdue"],
                        "rows": rows})
     notes = [
-        "LTIFR is per 200,000 hours worked. Recordable = injury incidents; "
+        "LTIFR is per 1,000,000 hours worked. Recordable = injury incidents; "
         "lost-time = injuries with lost days. Only months with hours entered are counted.",
     ]
     if not m["hours_reported"]:
@@ -353,5 +353,5 @@ def leaderboard_report(db: Session, period: str) -> dict:
                   "columns": ["Rank", "Site", "Hours", "Recordable", "Lost-time", "LTIFR",
                               "Open actions", "Overdue", "Status"],
                   "rows": rows}],
-                [f"Limit: LTIFR {limits['ltifr_limit']:g} per 200,000 hours. Sites with no hours "
+                [f"Limit: LTIFR {limits['ltifr_limit']:g} per 1,000,000 hours. Sites with no hours "
                  "entered are listed last, unranked."])

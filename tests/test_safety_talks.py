@@ -160,6 +160,31 @@ def test_she_team_records_a_training_with_its_document(client, auth):
     assert client.get(f"/trainings/{other['id']}/document", headers=auth["mgr"]).status_code == 403
 
 
+def test_an_online_training_carries_the_link_to_its_recording(client, auth):
+    form = {"site_id": "1", "date": "2026-09-11", "training_module": "Spill response (online)", "trainer_name": "Rudo Chikore",
+            "personnel": "All forecourt staff", "trained_employees": "12"}
+    link = "https://glowpetroleum-my.sharepoint.com/:f:/g/personal/she/Recordings/spill"
+    bad = client.post("/trainings/record", data={**form, "video_link": "javascript:alert(1)"}, headers=auth["she"])
+    assert bad.status_code == 422 and "https://" in bad.json()["detail"]
+    r = client.post("/trainings/record", data={**form, "video_link": link}, headers=auth["she"])   # no document needed
+    assert r.status_code == 201, r.text
+    t = r.json()
+    assert t["video_link"] == link and t["has_document"] is False
+    assert any(x["id"] == t["id"] and x["video_link"] == link for x in client.get("/trainings/", headers=auth["mgr"]).json())
+
+
+def test_the_dashboard_takes_a_from_and_to_month(client, auth):
+    r = client.get("/dashboard/summary", params={"from": "2026-09", "to": "2026-10"}, headers=auth["she"])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["from"], body["to"], body["period"]) == ("2026-09", "2026-10", "range")
+    assert body["current"]["label"] == "Sep – Oct 2026" or "Sep" in body["current"]["label"]
+    assert "Jul" in body["previous"]["label"]                                 # the two months just before
+    assert client.get("/dashboard/summary", params={"from": "2026-10", "to": "2026-09"}, headers=auth["she"]).status_code == 422
+    assert client.get("/dashboard/summary", params={"from": "2026-10"}, headers=auth["she"]).status_code == 422
+    assert client.get("/dashboard/summary", params={"period": "quarter"}, headers=auth["she"]).json()["period"] == "quarter"
+
+
 def test_dashboard_shows_talk_completion_and_filters_by_region(client, auth):
     s = client.get("/dashboard/summary", params={"period": "12m"}, headers=auth["she"]).json()
     assert "talks_rate" in s["current"]["totals"] and "Harare" in s["regions"]

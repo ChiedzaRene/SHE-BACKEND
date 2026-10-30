@@ -1,4 +1,4 @@
-"""LTIFR: 200,000-hour basis, recordable = injury, hours entered monthly by SHE team."""
+"""LTIFR: per 1,000,000 hours, recordable = injury, hours entered monthly by SHE team."""
 from datetime import date
 
 from database import SessionLocal
@@ -52,7 +52,7 @@ def test_rates_use_200k_basis_and_injury_only(client, auth):
     assert s1["lost_time_injuries"] == 1
     assert s1["hours_worked"] == 100000
     assert "trir" not in s1
-    assert s1["ltifr"] == 2.0     # 1 * 200000 / 100000
+    assert s1["ltifr"] == 10.0    # 1 * 1,000,000 / 100,000
     assert s1["total_incidents"] == 4  # still counts the spill
 
 
@@ -61,7 +61,7 @@ def test_site_without_hours_is_excluded_from_global_rate(client, auth):
     assert by_site[2]["ltifr"] is None and by_site[2]["hours_reported"] is False
     g = client.get("/incidents/metrics/global", headers=auth["admin"]).json()
     # Site 2's injury has no hours behind it, so it must not inflate the global rate
-    assert g["ltifr"] == 2.0 and g["total_incidents"] == 5
+    assert g["ltifr"] == 10.0 and g["total_incidents"] == 5
 
 
 def test_updating_hours_replaces_the_month(client, auth):
@@ -70,7 +70,7 @@ def test_updating_hours_replaces_the_month(client, auth):
     rows = client.get("/site-hours/?site_id=1", headers=auth["she"]).json()
     assert len(rows) == 1 and rows[0]["hours_worked"] == 200000
     assert rows[0]["workers"] == 42  # leaving workers out keeps the headcount already entered
-    assert client.get("/incidents/metrics/1", headers=auth["admin"]).json()["ltifr"] == 1.0
+    assert client.get("/incidents/metrics/1", headers=auth["admin"]).json()["ltifr"] == 5.0
 
 
 def test_site_manager_scoping(client, auth):
@@ -106,7 +106,7 @@ def test_unreported_month_does_not_inflate_rate(client):
         db.close()
     assert stats["recordable_incidents"] == 1
     assert stats["months_reported"] == 1
-    assert stats["ltifr"] == 4.0  # 1 * 200000 / 50000
+    assert stats["ltifr"] == 20.0  # 1 * 1,000,000 / 50,000
 
 
 def test_combine_ignores_sites_without_hours():
@@ -116,4 +116,4 @@ def test_combine_ignores_sites_without_hours():
          "hours_worked": 0.0, "months_reported": 0}
     total = combine([a, b])
     assert total["total_incidents"] == 6
-    assert total["recordable_incidents"] == 2 and total["ltifr"] == 2.0
+    assert total["recordable_incidents"] == 2 and total["ltifr"] == 10.0

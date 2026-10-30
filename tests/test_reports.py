@@ -86,7 +86,7 @@ def test_performance_report_numbers(client, auth):
     k = kpis(doc)
     # 2 recordable injuries in the month (the old one is another month); 1 lost-time; 50,000 hours
     assert not any("TRIR" in label for label in k)
-    assert k["LTIFR (month)"] == "4.00"          # 1 * 200000 / 50000
+    assert k["LTIFR (month)"] == "20.00"         # 1 * 1,000,000 / 50,000
     assert k["Hours worked"] == "50,000"
     assert k["Incidents logged"] == "3"          # 2 injuries + spill
     assert k["Open corrective actions"] == "1" and k["Overdue actions"] == "1"
