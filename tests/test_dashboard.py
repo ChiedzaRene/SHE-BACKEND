@@ -59,13 +59,13 @@ def two_sites():
     db.close()
 
 
-def test_each_site_has_its_own_rates_and_all_sites_is_their_average(two_sites):
+def test_each_site_has_its_own_rates_and_all_sites_uses_their_total_hours(two_sites):
     s = summarise(two_sites, [501, 502], date(2026, 7, 1), date(2026, 8, 1), TODAY)
     rows = {r["site_id"]: r for r in s["sites"]}
     assert (rows[501]["ltifr"], rows[502]["ltifr"]) == (10.0, 0.0)   # 1 x 1,000,000 / 100,000
     assert "trir" not in rows[501]
     t = s["totals"]
-    assert t["ltifr"] == 5.0 and "trir" not in t             # (10+0)/2, not pooled
+    assert t["ltifr"] == 6.67 and "trir" not in t            # 1 x 1,000,000 / 150,000 (both sites' hours together)
     assert t["hours_worked"] == 150000 and t["workers"] == 65
     assert t["incidents"] == 3 and t["injuries"] == 3 and t["lost_time_injuries"] == 1
     assert s["label"] == "July 2026"

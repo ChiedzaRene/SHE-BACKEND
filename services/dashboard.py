@@ -1,7 +1,8 @@
 """Figures for the dashboards, for any period and one site or all of them.
 
 Rates are worked out for each site on its own (its injuries over its own hours, per 1,000,000 hours).
-The figure for "all sites" is the average of the sites' rates, counting only sites with hours entered.
+The figure for several sites uses all of them together: every lost-time injury over the total hours worked by
+everyone at those sites (sites without hours entered add nothing to either side).
 """
 from collections import defaultdict
 from datetime import date, datetime
@@ -15,7 +16,7 @@ from models.incident import Incident
 from models.site import Site
 from models.site_hours import SiteHours
 from models.user import User
-from services.safety_metrics import compute_range
+from services.safety_metrics import rate, compute_range
 from services.safety_talks import combined_rate, weeks_status
 
 PERIODS = {
@@ -79,11 +80,6 @@ def _label(start: date, end: date) -> str:
         return start.strftime("%B %Y")
     same_year = start.year == last.year
     return f"{start:%b}{'' if same_year else start.strftime(' %Y')} – {last:%b %Y}"
-
-
-def _avg(values) -> Optional[float]:
-    values = [v for v in values if v is not None]
-    return round(sum(values) / len(values), 2) if values else None
 
 
 def _months(start: date, end: date) -> List[date]:
@@ -196,8 +192,8 @@ def summarise(db: Session, site_ids: List[int], start: date, end: date, today: O
             "hours_worked": sum(r["hours_worked"] for r in rows),
             "workers": sum(r["workers"] for r in rows if r["workers"] is not None) if any(
                 r["workers"] is not None for r in rows) else None,
-            # average of the sites' own rates (sites without hours left out)
-            "ltifr": _avg(r["ltifr"] for r in rows),
+            # all the sites together: lost-time injuries x 1,000,000 / total hours worked at those sites
+            "ltifr": rate(sum(r["lost_time_injuries"] for r in reported), sum(r["hours_worked"] for r in reported)),
             "sites_with_hours": len(reported),
             "sites": len(rows),
             "uncounted_injuries": sum(r["uncounted_injuries"] for r in rows),
