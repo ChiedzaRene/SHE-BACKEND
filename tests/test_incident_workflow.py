@@ -208,6 +208,9 @@ def test_stages_go_in_order_and_a_fatality_needs_the_operations_comment(client, 
     path = f"/incidents/{incident['id']}"
     assert client.put(path, json=workflow("closed"), headers=auth["she"]).status_code == 409
     close_ca(client, auth, to_actions_assigned(client, auth, people, incident))
+    # only a SHE Officer writes the SHE Officer's comment; anyone in the SHE team may close once it is there
+    assert client.put(path, json=workflow(she_comment="S"), headers=auth["she"]).status_code == 403
+    assert client.put(path, json=workflow(she_comment="S"), headers=people["officer"]).status_code == 200
     closing = dict(lessons_learned="L", report_type="full_investigation", she_comment="S")
     refused = client.put(path, json=workflow("closed", **closing), headers=auth["she"])
     assert refused.status_code == 422 and "Operations Manager" in refused.json()["detail"]
