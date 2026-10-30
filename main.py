@@ -30,6 +30,7 @@ from models.she_file import SheFile  # noqa: F401
 from models.safety_talk import SafetyTalk, SafetyTalkMiss  # noqa: F401
 from models.site_inspection import SiteInspection, InspectionNC, InspectionPhoto  # noqa: F401
 from models.site_licence import SiteLicence  # noqa: F401
+from models.fire_inspection import FireInspection, FireInspectionFile  # noqa: F401
 
 from routers import (
     auth, sites, incidents, audits,
@@ -43,6 +44,7 @@ from routers.she_files import router as she_files_router
 from routers.safety_talks import router as safety_talks_router
 from routers.site_inspections import router as site_inspections_router
 from routers.licences import router as licences_router
+from routers.fire_inspections import router as fire_inspections_router
 
 # Optional error monitoring: enabled only when SENTRY_DSN is set and sentry-sdk is installed
 if os.getenv("SENTRY_DSN"):
@@ -194,6 +196,7 @@ def _purge_audit_logs() -> None:
     from database import SessionLocal
     from services.retention import purge_old_audit_logs, purge_old_notifications
     from services.licences import send_reminders as send_licence_reminders
+    from services.fire_inspections import send_reminders as send_fire_reminders
     from services.safety_talks import record_missed
 
     db = SessionLocal()
@@ -212,6 +215,11 @@ def _purge_audit_logs() -> None:
     except Exception:
         db.rollback()
         logging.getLogger("she_portal").exception("Licence reminders failed")
+    try:
+        send_fire_reminders(db)  # fire extinguisher service and refill due within two weeks
+    except Exception:
+        db.rollback()
+        logging.getLogger("she_portal").exception("Fire equipment reminders failed")
     finally:
         db.close()
 
@@ -249,6 +257,7 @@ app.include_router(she_files_router)
 app.include_router(safety_talks_router)
 app.include_router(site_inspections_router)
 app.include_router(licences_router)
+app.include_router(fire_inspections_router)
 
 @app.get("/")
 def root():

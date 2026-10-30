@@ -65,6 +65,14 @@ def period_range(key: str, today: Optional[date] = None):
     return (start, end), (prev_start, prev_end)
 
 
+def month_range(first: str, last: str):
+    """[start, end) for the months `first` to `last` (YYYY-MM, both included), and the same span just before."""
+    start = date(int(first[:4]), int(first[5:7]), 1)
+    end = _add_months(date(int(last[:4]), int(last[5:7]), 1), 1)
+    months = (end.year - start.year) * 12 + end.month - start.month
+    return (start, end), (_add_months(start, -months), start)
+
+
 def _label(start: date, end: date) -> str:
     last = _add_months(end, -1)
     if start == last:

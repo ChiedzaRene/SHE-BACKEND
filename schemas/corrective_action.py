@@ -142,6 +142,8 @@ class CorrectiveActionResponse(BaseModel):
     nc_id: Optional[int] = None
     inspection_id: Optional[int] = None
     control: Optional[str] = None
+    source: Optional[str] = None
+    files: list = []
     # what happened, as reported: fixed once logged, so the action plan above holds only the plan
     incident_description: Optional[str] = None
 

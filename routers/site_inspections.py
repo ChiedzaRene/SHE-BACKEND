@@ -167,6 +167,7 @@ def _summary(insp: SiteInspection, site: Site, names: dict) -> dict:
         "id": insp.id, "number": insp.number, "site_id": insp.site_id, "site_name": site.name if site else None,
         "site_code": _site_code(site) if site else None, "region": site.region if site else None,
         "inspection_date": _iso(insp.inspection_date), "inspectors": insp.inspectors, "status": insp.status,
+        "kind": insp.kind or "she", "audit_body": insp.audit_body,
         "created_by_name": names.get(insp.created_by), "submitted_at": _iso(insp.submitted_at),
         "closed_at": _iso(insp.closed_at), "nc_counts": _counts(insp.ncs),
     }
@@ -212,6 +213,7 @@ def list_inspections(
     site_id: Optional[int] = Query(None, gt=0),
     region: Optional[str] = Query(None, max_length=100),
     status: Optional[str] = Query(None, pattern="^(draft|submitted|closed)$"),
+    kind: Optional[str] = Query(None, pattern="^(she|audit)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -223,6 +225,8 @@ def list_inspections(
         query = query.filter(SiteInspection.site_id.in_([s.id for s in sites.values() if s.region == region] or [0]))
     if status:
         query = query.filter(SiteInspection.status == status)
+    if kind:
+        query = query.filter(SiteInspection.kind == kind)
     rows = [i for i in query.order_by(SiteInspection.number.desc()).all() if _can_see(current_user, i, sites.get(i.site_id))]
     names = _names(db, [i.created_by for i in rows])
     return {
@@ -287,6 +291,8 @@ def assignees(inspection_id: int, db: Session = Depends(get_db), current_user: U
 class InspectionIn(BaseModel):
     site_id: int = Field(..., gt=0)
     inspection_date: date
+    kind: str = Field(default="she", pattern="^(she|audit)$")
+    audit_body: Optional[str] = Field(default=None, max_length=200)
     inspectors: Optional[str] = Field(default=None, max_length=300)
     introduction: Optional[str] = Field(default=None, max_length=40000)
     criteria: Optional[str] = Field(default=None, max_length=40000)
@@ -297,6 +303,7 @@ class InspectionIn(BaseModel):
 
 class InspectionUpdate(BaseModel):
     inspection_date: Optional[date] = None
+    audit_body: Optional[str] = Field(default=None, max_length=200)
     inspectors: Optional[str] = Field(default=None, max_length=300)
     introduction: Optional[str] = Field(default=None, max_length=40000)
     criteria: Optional[str] = Field(default=None, max_length=40000)
@@ -311,6 +318,8 @@ def _apply_sections(insp: SiteInspection, data: dict) -> None:
             setattr(insp, key, clean_html(data[key]))
     if "inspectors" in data:
         insp.inspectors = " ".join((data["inspectors"] or "").split()) or None
+    if "audit_body" in data and insp.kind == "audit":
+        insp.audit_body = " ".join((data["audit_body"] or "").split()) or None
     if data.get("inspection_date"):
         if data["inspection_date"] > local_today():
             raise HTTPException(status_code=422, detail="The inspection date can't be in the future.")
@@ -327,7 +336,7 @@ def create_inspection(
         raise HTTPException(status_code=404, detail="Site not found")
     number = (db.query(func.max(SiteInspection.number)).scalar() or 0) + 1
     insp = SiteInspection(number=number, site_id=site.id, inspection_date=body.inspection_date,
-                          status="draft", created_by=current_user.id)
+                          kind=body.kind, status="draft", created_by=current_user.id)
     _apply_sections(insp, body.model_dump())
     db.add(insp)
     db.commit()

@@ -196,7 +196,7 @@ def delete_site(
         "corrective actions": CorrectiveAction,
         "scorecards": Scorecard,
         "hours entries": SiteHours,
-        "toolbox talks": SafetyTalk,
+        "SHE talks": SafetyTalk,
         "inspection reports": SiteInspection,
         "licences": SiteLicence,
         "users": User,

@@ -143,10 +143,10 @@ def record_missed(db: Session, today: Optional[date] = None) -> int:
             when = week.strftime("%a %d %b").replace(" 0", " ")
             managers = site_managers(db, site.id)
             who_runs = ", ".join(m.full_name or m.email for m in managers) or "no site manager assigned"
-            notify(db, team(db), kind="talk_missed", title=f"Missed toolbox talk: {site.name} ({when})",
+            notify(db, team(db), kind="talk_missed", title=f"Missed SHE talk: {site.name} ({when})",
                    message=f"No talk was submitted for the week of {when} ({who_runs}).",
                    link="/trainings", resource="safety_talks", resource_id=None)
-            notify(db, managers, kind="talk_missed", title=f"Your toolbox talk for {when} was not submitted",
+            notify(db, managers, kind="talk_missed", title=f"Your SHE talk for {when} was not submitted",
                    message="Submissions close at the end of Tuesday. This week counts as missed.",
                    link="/trainings", resource="safety_talks", resource_id=None)
             told += 1

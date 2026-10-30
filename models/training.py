@@ -23,6 +23,8 @@ class Training(Base):
     document_type = Column(String(120), nullable=True)
     document_size = Column(Integer, nullable=True)
     document = deferred(Column(LargeBinary, nullable=True))
+    # a training given online: the link to its recording (e.g. the OneDrive folder with the video)
+    video_link = Column(String(1000), nullable=True)
 
     site = relationship("Site")
     trainer = relationship("User")

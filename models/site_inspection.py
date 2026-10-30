@@ -18,6 +18,8 @@ class SiteInspection(Base):
     site_id = Column(Integer, ForeignKey("sites.id"), nullable=False, index=True)
     inspection_date = Column(Date, nullable=False)
     inspectors = Column(String(300), nullable=True)
+    kind = Column(String(20), nullable=False, default="she")         # "she" inspection | "audit" findings
+    audit_body = Column(String(200), nullable=True)                  # who audited, for an audit
     # formatted text (cleaned HTML: bold, italic, underline, lists)
     introduction = Column(Text, nullable=True)
     criteria = Column(Text, nullable=True)
