@@ -45,7 +45,7 @@ def test_hours_validation(client, auth):
     assert client.put("/site-hours/", json={**ok, "site_id": 999}, headers=she).status_code == 404
 
 
-def test_rates_use_200k_basis_and_injury_only(client, auth):
+def test_rates_use_the_million_hour_basis_and_injury_only(client, auth):
     # Site 1 has 100,000 hours this month: 3 recordable injuries, 1 lost-time (the spill is ignored)
     s1 = client.get("/incidents/metrics/1", headers=auth["admin"]).json()
     assert s1["recordable_incidents"] == 3
@@ -117,3 +117,32 @@ def test_combine_ignores_sites_without_hours():
     total = combine([a, b])
     assert total["total_incidents"] == 6
     assert total["recordable_incidents"] == 2 and total["ltifr"] == 10.0
+
+
+def test_ltifr_is_lost_time_injuries_times_a_million_over_hours_and_fatalities_count():
+    """LTIFR = lost-time injuries x 1,000,000 / hours worked. A lost-time injury is one that cost at least a
+    full shift, or that the site report records as a lost time injury or a fatality (whatever its type)."""
+    db = SessionLocal()
+    try:
+        from models.site import Site
+        db.add(Site(id=10, name="Site LTI", address="l"))
+        db.flush()
+        db.add(SiteHours(site_id=10, period=date(2026, 8, 1), hours_worked=400000, entered_by=1))
+        day = date(2026, 8, 10)
+        for kind, severity, lost, intake in (
+            ("injury", "low", 0, {"injury_outcome": "first_aid"}),        # recordable, not lost time
+            ("injury", "medium", 3, {}),                                   # lost time: days off duty
+            ("injury", "high", 0, {"injury_outcome": "lost_time"}),        # lost time per the site report
+            ("accident", "fatal", 0, {"categories": ["fatality"]}),        # a fatality always counts
+            ("spill", "low", 0, {}),                                       # not an injury
+        ):
+            db.add(Incident(site_id=10, user_id=1, type=kind, description="d", severity=severity,
+                            lost_time_days=lost, incident_intake=intake, occurred_at=day))
+        db.commit()
+        stats = compute_by_site(db, [10], "12m", today=date(2026, 10, 1))[10]
+    finally:
+        db.close()
+    assert stats["total_incidents"] == 5
+    assert stats["recordable_incidents"] == 4
+    assert stats["lost_time_injuries"] == 3
+    assert stats["ltifr"] == 7.5  # 3 * 1,000,000 / 400,000
