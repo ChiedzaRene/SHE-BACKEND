@@ -113,6 +113,9 @@ def _check_who_writes_what(incident: Incident, workflow: IncidentWorkflow, chang
         if workflow.status != "investigating":
             raise HTTPException(status_code=409, detail="The findings are written once the investigation has started, "
                                                         "and are fixed once sent to the SHE team")
+    if "she_comment" in changes and (changes["she_comment"] or None) != (workflow.she_comment or None) \
+            and user.role != "she_officer":
+        raise HTTPException(status_code=403, detail="Only a SHE Officer writes the SHE Officer's comment")
     if "root_cause" in changes and _stage_at(workflow.status) < _stage_at("findings_recorded"):
         raise HTTPException(status_code=409, detail="The root cause is recorded after the investigation team sends its findings")
 

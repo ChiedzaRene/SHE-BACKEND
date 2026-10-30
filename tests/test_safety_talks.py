@@ -173,6 +173,28 @@ def test_an_online_training_carries_the_link_to_its_recording(client, auth):
     assert any(x["id"] == t["id"] and x["video_link"] == link for x in client.get("/trainings/", headers=auth["mgr"]).json())
 
 
+def test_one_training_can_be_given_to_several_sites_at_once(client, auth):
+    form = {"date": "2026-09-12", "training_module": "First aid (joint)", "trainer_name": "Rudo Chikore",
+            "personnel": "Forecourt attendants", "video_link": "https://onedrive.live.com/first-aid"}
+    # every site needs its own number trained
+    short = client.post("/trainings/record", data={**form, "site_id": ["1", "2"], "trained_employees": ["5"]},
+                        headers=auth["she"])
+    assert short.status_code == 422 and "each site" in short.json()["detail"]
+    twice = client.post("/trainings/record", data={**form, "site_id": ["1", "1"], "trained_employees": ["5", "6"]},
+                        headers=auth["she"])
+    assert twice.status_code == 422
+    r = client.post("/trainings/record", data={**form, "site_id": ["1", "2"], "trained_employees": ["5", "7"]},
+                    headers=auth["she"])
+    assert r.status_code == 201, r.text
+    assert r.json()["session_sites"] == [1, 2] and r.json()["session_id"]
+    rows = [t for t in client.get("/trainings/", headers=auth["she"]).json() if t["training_module"] == "First aid (joint)"]
+    assert sorted((t["site_id"], t["trained_employees"]) for t in rows) == [(1, 5), (2, 7)]
+    assert len({t["session_id"] for t in rows}) == 1 and all(t["session_sites"] == [1, 2] for t in rows)
+    # each site's manager sees their own site's record, and that it was a joint training
+    mine = [t for t in client.get("/trainings/", headers=auth["mgr"]).json() if t["training_module"] == "First aid (joint)"]
+    assert [(t["site_id"], t["trained_employees"], t["session_sites"]) for t in mine] == [(1, 5, [1, 2])]
+
+
 def test_the_dashboard_takes_a_from_and_to_month(client, auth):
     r = client.get("/dashboard/summary", params={"from": "2026-09", "to": "2026-10"}, headers=auth["she"])
     assert r.status_code == 200, r.text

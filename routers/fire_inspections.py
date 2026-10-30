@@ -24,6 +24,7 @@ from services.clock import local_today
 from services.files import clean_filename, file_response, is_viewable, read_upload
 from services.fire_inspections import ITEMS, KINDS, RESULTS, checklist, default_next_due, latest
 from services.notifications import notify, team, who
+from services.richtext import clean_html
 
 router = APIRouter(prefix="/fire-inspections", tags=["Fire equipment inspections"])
 
@@ -183,7 +184,7 @@ async def submit_fire_inspection(
     inspector_name: str = Form(..., min_length=2, max_length=150),
     site_id: Optional[int] = Form(None, gt=0),
     answers: Optional[str] = Form(None, max_length=50000),
-    comments: Optional[str] = Form(None, max_length=4000),
+    comments: Optional[str] = Form(None, max_length=20000, description="formatted text: bold, italic, underline, lists"),
     contractor: Optional[str] = Form(None, max_length=200),
     extinguishers: Optional[int] = Form(None, ge=0, le=10000),
     next_due: Optional[date] = Form(None),
@@ -213,7 +214,7 @@ async def submit_fire_inspection(
         contractor=(" ".join(contractor.split()) or None) if contractor and kind == "service_refill" else None,
         extinguishers=extinguishers if kind == "service_refill" else None,
         answers=_clean_answers(kind, answers),
-        comments=(comments or "").strip() or None,
+        comments=clean_html(comments),
         next_due=next_due or default_next_due(kind, inspection_date),
         created_by=current_user.id,
     )

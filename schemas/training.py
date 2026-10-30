@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 import html
 import bleach
 from pydantic import BaseModel, Field, field_validator
@@ -77,6 +77,8 @@ class TrainingResponse(BaseModel):
     document_name: Optional[str] = None
     document_type: Optional[str] = None
     document_size: Optional[int] = None
+    session_id: Optional[str] = None
+    session_sites: List[int] = []   # every site given this training in the same session
     has_document: bool = False
     document_viewable: bool = False
     video_link: Optional[str] = None

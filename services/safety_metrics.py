@@ -2,7 +2,9 @@
 
 Definitions (per 1,000,000 hours worked):
   * Recordable incident   = an incident of type "injury"
-  * Lost-time injury      = a recordable incident with lost_time_days > 0
+  * Lost-time injury      = a recordable incident that cost at least one full shift (lost_time_days > 0),
+                            or whose severity on the site report is a lost time injury or a fatality;
+                            a fatality always counts, whatever type it was logged as
   * LTIFR = lost-time injuries    x 1,000,000 / hours worked
 
 Hours worked come from the monthly `site_hours` entries. Only months with hours entered
@@ -36,6 +38,24 @@ def window_start(period: str, today: Optional[date] = None) -> date:
     # "12m": the current month plus the 11 before it
     months = today.year * 12 + (today.month - 1) - 11
     return date(months // 12, months % 12 + 1, 1)
+
+
+def _is_fatal(severity, intake) -> bool:
+    intake = intake if isinstance(intake, dict) else {}
+    categories = intake.get("categories") or []
+    if isinstance(categories, str):
+        categories = [categories]
+    return ((severity or "").strip().lower() == "fatal" or intake.get("injury_outcome") == "fatality"
+            or "fatality" in categories)
+
+
+def _counts(inc_type, severity, intake, lost_days) -> tuple:
+    """(recordable, lost-time) for one incident."""
+    fatal = _is_fatal(severity, intake)
+    recordable = (inc_type or "").strip().lower() == "injury" or fatal
+    outcome = intake.get("injury_outcome") if isinstance(intake, dict) else None
+    lost_time = recordable and (fatal or bool(lost_days and lost_days > 0) or outcome == "lost_time")
+    return recordable, lost_time
 
 
 def _rate(count: int, hours: float) -> Optional[float]:
@@ -94,7 +114,8 @@ def compute_range(
         SiteHours.period >= start
     )
     when = func.coalesce(Incident.occurred_at, Incident.date_time)
-    inc_q = db.query(Incident.site_id, when, Incident.type, Incident.lost_time_days).filter(
+    inc_q = db.query(Incident.site_id, when, Incident.type, Incident.lost_time_days, Incident.severity,
+                     Incident.incident_intake).filter(
         when >= start
     )
     if end is None:
@@ -115,10 +136,10 @@ def compute_range(
             stats["hours_worked"] += hours
             stats["months_reported"] += 1
 
-    for site_id, ts, inc_type, lost_days in inc_q:
+    for site_id, ts, inc_type, lost_days, severity, intake in inc_q:
         stats = result.setdefault(site_id, _empty())
         stats["total_incidents"] += 1
-        is_injury = (inc_type or "").strip().lower() == "injury"
+        is_injury, is_lost_time = _counts(inc_type, severity, intake, lost_days)
         month = month_start(ts.date() if hasattr(ts, "date") else ts)
         if (site_id, month) not in reported:
             if is_injury:
@@ -129,7 +150,7 @@ def compute_range(
             continue
         if is_injury:
             stats["recordable_incidents"] += 1
-            if lost_days and lost_days > 0:
+            if is_lost_time:
                 stats["lost_time_injuries"] += 1
 
     return {sid: _finish(stats) for sid, stats in result.items()}

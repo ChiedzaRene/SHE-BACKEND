@@ -55,6 +55,7 @@ NEW_COLUMNS = {
     ],
     "trainings": [
         ("video_link", "VARCHAR(1000)"),
+        ("session_id", "VARCHAR(36)"),
         ("document_name", "VARCHAR(255)"),
         ("document_type", "VARCHAR(120)"),
         ("document_size", "INTEGER"),

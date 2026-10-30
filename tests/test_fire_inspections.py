@@ -74,7 +74,8 @@ def test_a_site_sends_its_fortnightly_checklist(client, auth):
 def test_service_and_refill_needs_proof_and_is_due_again_in_six_months(client, auth):
     first = date.today() - timedelta(days=180)
     base = {"kind": "service_refill", "inspection_date": first.isoformat(), "inspector_name": "Tendai Moyo",
-            "contractor": "Fire Masters (Pvt) Ltd", "extinguishers": "6", "comments": "All refilled"}
+            "contractor": "Fire Masters (Pvt) Ltd", "extinguishers": "6",
+            "comments": "<p>All <b>refilled</b></p><ul><li>Tags replaced</li></ul><script>alert(1)</script>"}
     r = client.post("/fire-inspections/", data=base, headers=auth["mgr"])
     assert r.status_code == 422 and "proof" in r.json()["detail"]
     r = client.post("/fire-inspections/", data=base, headers=auth["mgr"],
@@ -84,6 +85,8 @@ def test_service_and_refill_needs_proof_and_is_due_again_in_six_months(client, a
     assert out["next_due"] == add_months(first, 6).isoformat()
     assert out["contractor"] == "Fire Masters (Pvt) Ltd" and out["extinguishers"] == 6
     assert len(out["files"]) == 1
+    assert "<b>refilled</b>" in out["comments"] and "<li>Tags replaced</li>" in out["comments"]
+    assert "script" not in out["comments"]
     f = client.get(f"/fire-inspections/files/{out['files'][0]['id']}", headers=auth["she"])
     assert f.status_code == 200 and f.content == PDF
 
