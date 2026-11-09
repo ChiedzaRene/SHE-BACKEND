@@ -125,3 +125,36 @@ def test_site_without_a_phone_number_can_be_saved(client, auth):
     bad = client.post("/sites/", json={**body, "name": "Bad Phone", "contact_number": "call me"}, headers=auth["admin"])
     assert bad.status_code == 422
     client.delete(f"/sites/{site_id}", headers=auth["admin"])
+
+
+def test_admins_see_when_each_person_was_last_active(client, auth):
+    from models.user import User
+    from services.auth_services import ACTIVITY_EVERY
+
+    def last_active(email):
+        rows = client.get("/users/", headers=auth["admin"]).json()
+        return next(u["last_active_at"] for u in rows if u["email"] == email)
+
+    db = SessionLocal()
+    db.query(User).filter(User.email == "mgr@x.com").update({User.last_active_at: None})
+    db.commit()
+    db.close()
+    assert last_active("mgr@x.com") is None                         # never seen since the column was added
+
+    auth_router.limiter.reset()
+    login_throttle.reset()
+    token = _login(client, "mgr@x.com", PASSWORD).json()["access_token"]
+    first = last_active("mgr@x.com")
+    assert first is not None                                        # signing in counts
+
+    # using the portal keeps it fresh, but it is only written every few minutes
+    headers = {"Authorization": f"Bearer {token}"}
+    client.get("/users/me", headers=headers)
+    assert last_active("mgr@x.com") == first
+    db = SessionLocal()
+    long_ago = datetime.now(timezone.utc) - ACTIVITY_EVERY - timedelta(minutes=1)
+    db.query(User).filter(User.email == "mgr@x.com").update({User.last_active_at: long_ago})
+    db.commit()
+    db.close()
+    client.get("/users/me", headers=headers)
+    assert last_active("mgr@x.com") > long_ago.isoformat()[:19]

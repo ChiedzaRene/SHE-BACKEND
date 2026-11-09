@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 import html
 import bleach
@@ -77,6 +78,7 @@ class UserResponse(BaseModel):
     region: Optional[str] = None
     is_active: bool = True
     must_change_password: bool = False
+    last_active_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

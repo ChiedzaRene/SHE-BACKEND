@@ -15,6 +15,7 @@ from services.auth_services import (
     require_role,
     hash_password,
     authenticate_user,
+    mark_active,
     issue_token,
     get_user_by_email
 )
@@ -118,6 +119,7 @@ def login(
         )
 
     record_success(form_data.username)
+    mark_active(db, user)
     log_action(db=db, user=user, action="LOGIN", resource="auth", details="Signed in", ip_address=ip)
     return {"access_token": issue_token(user), "token_type": "bearer"}
 

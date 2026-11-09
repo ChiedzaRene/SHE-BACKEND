@@ -29,6 +29,7 @@ NEW_COLUMNS = {
         ("must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("token_version", "INTEGER NOT NULL DEFAULT 0"),
         ("region", "VARCHAR(100)"),
+        ("last_active_at", {"postgresql": "TIMESTAMP WITH TIME ZONE", "default": "DATETIME"}),
     ],
     "incidents": [
         ("injured_person", "VARCHAR(150)"),
