@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -71,6 +71,26 @@ OVERSIGHT_ROLES = READ_ONLY_ROLES
 READ_ONLY_MAY_WRITE = {"/users/me", "/auth/change-password", "/notifications/read", "/notifications/unread"}
 
 
+ACTIVITY_EVERY = timedelta(minutes=5)  # how often "last active" is written while someone uses the portal
+
+
+def mark_active(db: Session, user: User) -> None:
+    """Note that the person is using the portal now. Written at most every few minutes, and never at the
+    cost of the request itself."""
+    now = datetime.now(timezone.utc)
+    seen = user.last_active_at
+    if seen is not None and seen.tzinfo is None:  # SQLite hands back times without a zone
+        seen = seen.replace(tzinfo=timezone.utc)
+    if seen is not None and now - seen < ACTIVITY_EVERY:
+        return
+    try:
+        db.query(User).filter(User.id == user.id).update({User.last_active_at: now}, synchronize_session=False)
+        db.commit()
+        user.last_active_at = now
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
 def get_user_by_email(db: Session, email: str):
     return db.query(User).filter(User.email == email).first()
 
@@ -130,6 +150,7 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "password_change_required", "message": "You must choose a new password before continuing."},
         )
+    mark_active(db, user)
     return user
 
 

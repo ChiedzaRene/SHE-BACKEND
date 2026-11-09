@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy import Column, DateTime, Integer, String, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -20,6 +20,8 @@ class User(Base):
     # Bumped whenever the password changes. Tokens carry the value they were issued with, so every
     # older session stops working ("sign out everywhere").
     token_version = Column(Integer, default=0, server_default="0", nullable=False)
+    # When the person last signed in or used the portal (kept to within a few minutes)
+    last_active_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     site = relationship("Site", back_populates="users")
