@@ -1,6 +1,10 @@
 """Plain-English names for the codes in the audit log, so people don't have to read CREATE_INCIDENT."""
 
 ACTION_LABELS = {
+    # recorded automatically for every change no other entry describes
+    "RECORD_CREATED": "Record added",
+    "RECORD_UPDATED": "Record changed",
+    "RECORD_DELETED": "Record deleted",
     "CREATE_INCIDENT": "Incident logged",
     "UPDATE_INCIDENT": "Incident updated",
     "INCIDENT_WORKFLOW_CHANGED": "Incident workflow changed",
@@ -70,6 +74,16 @@ RESOURCE_LABELS = {
     "site_inspections": "Inspections",
     "fire_inspections": "Fire equipment inspections",
     "licences": "Licences",
+    "site_licences": "Licences",
+    "incident_workflows": "Incident investigations",
+    "incident_files": "Incident evidence files",
+    "corrective_action_files": "Corrective action evidence",
+    "inspection_ncs": "Inspection non-conformities",
+    "inspection_photos": "Inspection files",
+    "fire_inspection_files": "Fire inspection files",
+    "safety_talk_misses": "Missed SHE talks",
+    "scorecard_items": "Legal scorecard items",
+    "app_settings": "Settings",
 }
 
 

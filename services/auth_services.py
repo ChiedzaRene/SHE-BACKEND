@@ -150,6 +150,9 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "password_change_required", "message": "You must choose a new password before continuing."},
         )
+    from services.audit_trail import set_actor
+
+    set_actor(user)
     mark_active(db, user)
     return user
 

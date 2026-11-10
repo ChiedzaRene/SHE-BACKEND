@@ -1,6 +1,6 @@
 # audit_log.py
 from datetime import date, timedelta
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func
@@ -9,12 +9,15 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.user import User as UserModel
 from models.audit_log import AuditLog
+from models.site import Site
 from models.user import User
 from schemas.audit_log import AuditLogResponse
 from services.audit_labels import ACTION_LABELS, RESOURCE_LABELS, action_label, resource_label
 from services.auth_services import require_role
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
+
+AUDIT_ROLES = ("admin", "super_admin")  # the audit trail is for the portal's administrators
 
 
 def _like_escape(text: str) -> str:
@@ -39,7 +42,7 @@ def _apply_filters(query, user, resource, action, start, end, email=None):
     return query
 
 
-@router.get("/", response_model=List[AuditLogResponse])
+@router.get("/")
 def get_audit_logs(
     response: Response,
     email: Optional[str] = Query(None, max_length=254, description="Exactly this person (as picked from the list)"),
@@ -51,25 +54,47 @@ def get_audit_logs(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    # Strict Super Admin Restriction:
-    current_user: User = Depends(require_role("super_admin")),
+    current_user: User = Depends(require_role(*AUDIT_ROLES)),
 ):
-    """Retrieve system audit logs, newest first (Super Admin only). Total matches in X-Total-Count."""
+    """The audit trail, newest first (administrators only). Total matches in X-Total-Count."""
     query = _apply_filters(db.query(AuditLog), user, resource, action, start, end, email)
 
     response.headers["X-Total-Count"] = str(query.count())
-    return (
-        query.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
-        .limit(limit)
-        .offset(offset)
-        .all()
-    )
+    rows = query.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc()).limit(limit).offset(offset).all()
+    return _with_names(db, rows)
+
+
+def _with_names(db: Session, rows) -> list:
+    """Each entry, with the sites and people its changes point at shown by name as well as number."""
+    wanted = {"sites": set(), "users": set()}
+    for r in rows:
+        for c in r.changes or []:
+            for v in c.get("fields", {}).values():
+                if v.get("ref") in wanted:
+                    wanted[v["ref"]].update(x for x in (v.get("old"), v.get("new")) if isinstance(x, int))
+    names = {
+        "sites": {sid: name for sid, name in db.query(Site.id, Site.name).filter(Site.id.in_(wanted["sites"] or {0}))},
+        "users": {uid: (full or email) for uid, full, email in
+                  db.query(UserModel.id, UserModel.full_name, UserModel.email).filter(UserModel.id.in_(wanted["users"] or {0}))},
+    }
+    out = []
+    for r in rows:
+        item = AuditLogResponse.model_validate(r).model_dump()
+        for c in item.get("changes") or []:
+            c["table_label"] = resource_label(c.get("table"))
+            for v in c.get("fields", {}).values():
+                found = names.get(v.get("ref"), {})
+                for side in ("old", "new"):
+                    if v.get(side) in found:
+                        v[f"{side}_label"] = found[v[side]]
+        out.append(item)
+    return out
 
 
 @router.get("/facets")
 def get_audit_log_facets(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("super_admin")),
+    current_user: User = Depends(require_role(*AUDIT_ROLES)),
 ):
     """The actions, areas and people that appear in the log, with plain-English names, for the filters."""
     actions = [a for (a,) in db.query(AuditLog.action).distinct()]
@@ -103,7 +128,7 @@ def _people(db: Session) -> list:
 def get_person_summary(
     email: str = Query(..., max_length=254),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("super_admin")),
+    current_user: User = Depends(require_role(*AUDIT_ROLES)),
 ):
     """Everything about one person's trail at a glance: how much, since when, and what kind of activity."""
     mine = func.lower(AuditLog.user_email) == email.strip().lower()

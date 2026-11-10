@@ -25,6 +25,9 @@ def ddl_transaction(engine):
 # table -> [(column, SQL type and default)]. Literals work on both PostgreSQL and SQLite;
 # a type spelled differently per database is a dict keyed by dialect name, with a "default".
 NEW_COLUMNS = {
+    "audit_logs": [
+        ("changes", "JSON"),
+    ],
     "users": [
         ("must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("token_version", "INTEGER NOT NULL DEFAULT 0"),
