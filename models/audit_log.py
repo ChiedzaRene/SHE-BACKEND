@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy import JSON, Column, Integer, String, DateTime, Text
 from sqlalchemy.sql import func
 from database import Base
 
@@ -13,4 +13,6 @@ class AuditLog(Base):
     resource_id = Column(Integer, nullable=True) # e.g. incident id
     details = Column(Text, nullable=True)        # extra info
     ip_address = Column(String, nullable=True)
+    # what changed: [{"op", "table", "id", "fields": {column: {"old", "new", "ref"?}}}]
+    changes = Column(JSON, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())

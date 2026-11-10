@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import logging
@@ -62,6 +63,8 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 # (set ENABLE_DOCS=true for local development).
 DOCS_ENABLED = os.getenv("ENABLE_DOCS", "false").lower() == "true"
 
+from services import audit_trail  # noqa: E402  (records every change, see the middleware below)
+
 app = FastAPI(
     title="SHE Management System",
     description="Safety, Health & Environment Management API",
@@ -71,6 +74,18 @@ app = FastAPI(
     redoc_url="/redoc" if DOCS_ENABLED else None,
     openapi_url="/openapi.json" if DOCS_ENABLED else None,
 )
+
+
+@app.middleware("http")
+async def audit_trail_for_request(request: Request, call_next):
+    """Every change made while handling this request is recorded with who made it (see services/audit_trail)."""
+    token = audit_trail.begin(request.client.host if request.client else None)
+    try:
+        return await call_next(request)
+    finally:
+        leftovers = audit_trail.end(token)
+        if leftovers:
+            await asyncio.to_thread(audit_trail.write_leftovers, leftovers)
 
 
 @app.middleware("http")

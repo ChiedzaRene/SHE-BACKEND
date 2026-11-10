@@ -111,10 +111,13 @@ def test_person_summary(client, auth):
     assert unknown["total"] == 0 and unknown["first_at"] is None and unknown["status"] == "unknown"
 
 
-def test_person_summary_is_super_admin_only(client, auth):
+def test_the_audit_trail_is_for_administrators_only(client, auth):
     assert client.get("/audit-logs/person?email=a@b.com").status_code == 401
-    for who in ("admin", "she", "mgr"):
-        assert client.get("/audit-logs/person?email=a@b.com", headers=auth[who]).status_code == 403
+    for who in ("she", "mgr"):
+        for path in ("/audit-logs/", "/audit-logs/facets", "/audit-logs/person?email=a@b.com"):
+            assert client.get(path, headers=auth[who]).status_code == 403
+    for who in ("admin", "super"):
+        assert client.get("/audit-logs/", headers=auth[who]).status_code == 200
 
 
 def test_export_is_gone(client, auth):

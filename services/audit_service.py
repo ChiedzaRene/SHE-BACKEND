@@ -10,14 +10,19 @@ def log_action(
     details: str = None,
     ip_address: str = None
 ):
+    from services.audit_trail import claim, current_ip, describe
+
+    db.flush()  # so changes not yet written are noted and can go with this entry
+    changes = claim(db, resource, resource_id)
     entry = AuditLog(
         user_email=user.email,
         user_role=user.role,
         action=action,
         resource=resource,
         resource_id=resource_id,
-        details=details,
-        ip_address=ip_address
+        details=details or (describe(changes) if changes else None),
+        ip_address=ip_address or current_ip(),
+        changes=changes or None,
     )
     db.add(entry)
     db.commit()

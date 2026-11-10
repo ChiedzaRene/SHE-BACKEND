@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Any, List, Optional
 from datetime import datetime
 import html
 
@@ -26,6 +26,7 @@ class AuditLogResponse(BaseModel):
     details: Optional[str] = None
     ip_address: Optional[str] = None
     timestamp: datetime
+    changes: Optional[List[Any]] = None
 
     # Sanitize string fields automatically
     @field_validator("user_email", "user_role", "action", "resource", "details", "ip_address", mode="before")

@@ -166,12 +166,13 @@ def test_changing_targets_changes_report_status_and_is_logged(client, auth):
 
 # ─── Audit log ──────────────────────────────────────────────────────────────
 
-def test_audit_log_is_super_admin_only(client, auth):
-    for who in ("admin", "she", "mgr"):
+def test_audit_log_is_for_admins_and_super_admins(client, auth):
+    for who in ("she", "mgr"):
         assert client.get("/audit-logs/", headers=auth[who]).status_code == 403
         assert client.get("/audit-logs/facets", headers=auth[who]).status_code == 403
     assert client.get("/audit-logs/").status_code == 401
-    assert client.get("/audit-logs/", headers=auth["super"]).status_code == 200
+    for who in ("admin", "super"):
+        assert client.get("/audit-logs/", headers=auth[who]).status_code == 200
 
 
 def test_audit_log_filters_paging_and_facets(client, auth):

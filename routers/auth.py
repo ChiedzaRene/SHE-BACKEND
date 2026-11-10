@@ -6,6 +6,7 @@ from slowapi.util import get_remote_address
 from database import get_db
 from models.user import User
 from schemas.user import ChangePassword, UserCreate, UserResponse, Token
+from services.audit_trail import set_actor
 from services.audit_service import log_action, log_event
 from services.login_throttle import record_failure, record_success, seconds_until_allowed
 from services.passwords import set_new_password
@@ -119,6 +120,7 @@ def login(
         )
 
     record_success(form_data.username)
+    set_actor(user)
     mark_active(db, user)
     log_action(db=db, user=user, action="LOGIN", resource="auth", details="Signed in", ip_address=ip)
     return {"access_token": issue_token(user), "token_type": "bearer"}
