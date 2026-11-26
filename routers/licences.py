@@ -19,7 +19,9 @@ from services.audit_service import log_action
 from services.auth_services import get_current_user, require_role
 from services.clock import local_today
 from services.files import clean_filename, file_response, is_viewable, read_upload
-from services.licences import LICENCE_TYPES, send_reminders, status_of
+from services.fire_inspections import add_months
+from services.licences import (LICENCE_TYPES, SHE_ONLY, VALID_MONTHS, may_upload, reminder_days, send_reminders,
+                               status_label, status_of)
 
 router = APIRouter(prefix="/licences", tags=["Licences"])
 
@@ -32,7 +34,9 @@ def _out(lic: SiteLicence, today: date, names: dict) -> dict:
         "id": lic.id, "site_id": lic.site_id, "licence_type": lic.licence_type, "name": name, "issuer": issuer,
         "licence_number": lic.licence_number, "issue_date": lic.issue_date.isoformat() if lic.issue_date else None,
         "expiry_date": lic.expiry_date.isoformat(), "days_left": (lic.expiry_date - today).days,
-        "status": status_of(lic.expiry_date, today), "amount": lic.amount, "notes": lic.notes,
+        "status": status_of(lic.expiry_date, today, lic.licence_type),
+        "status_label": status_label(status_of(lic.expiry_date, today, lic.licence_type), lic.licence_type),
+        "amount": lic.amount, "notes": lic.notes,
         "document_name": lic.document_name, "document_viewable": bool(lic.document_name) and is_viewable(lic.document_name),
         "current": lic.superseded_by is None, "recorded_by_name": names.get(lic.created_by),
         "created_at": lic.created_at.isoformat() if lic.created_at else None,
@@ -54,7 +58,9 @@ def _visible_sites(db: Session, user: User, site_id: Optional[int], region: Opti
 
 @router.get("/types")
 def licence_types():
-    return [{"key": k, "name": n, "issuer": i} for k, (n, i) in LICENCE_TYPES.items()]
+    return [{"key": k, "name": n, "issuer": i, "valid_months": VALID_MONTHS.get(k),
+             "reminder_days": list(reminder_days(k)), "she_only": k in SHE_ONLY}
+            for k, (n, i) in LICENCE_TYPES.items()]
 
 
 @router.get("/")
@@ -79,10 +85,14 @@ def register(
         for key, (name, issuer) in LICENCE_TYPES.items():
             history = [r for r in mine if r.licence_type == key]
             current = next((r for r in history if r.superseded_by is None), None)
+            status = status_of(current.expiry_date, today, key) if current else "missing"
             cell = {
                 "licence_type": key, "name": name, "issuer": issuer,
                 "current": _out(current, today, names) if current else None,
-                "status": status_of(current.expiry_date, today) if current else "missing",
+                "status": status, "status_label": status_label(status, key),
+                "can_edit": current_user.role in EDITORS and may_upload(current_user, key),
+                "valid_months": VALID_MONTHS.get(key), "she_only": key in SHE_ONLY,
+                "reminder_days": list(reminder_days(key)),
                 "history": [_out(r, today, names) for r in history if r is not current],
             }
             counts[cell["status"]] += 1
@@ -105,7 +115,7 @@ async def record_licence(
     request: Request,
     site_id: int = Form(..., gt=0),
     licence_type: str = Form(...),
-    expiry_date: date = Form(...),
+    expiry_date: Optional[date] = Form(None),
     issue_date: Optional[date] = Form(None),
     licence_number: Optional[str] = Form(None, max_length=100),
     amount: Optional[float] = Form(None, ge=0, le=100_000_000),
@@ -121,6 +131,13 @@ async def record_licence(
         raise HTTPException(status_code=404, detail="Site not found")
     if licence_type not in LICENCE_TYPES:
         raise HTTPException(status_code=422, detail="Choose one of the licence types.")
+    if not may_upload(current_user, licence_type):
+        raise HTTPException(status_code=403, detail=f"{LICENCE_TYPES[licence_type][0]}s are uploaded by the SHE team.")
+    if expiry_date is None:
+        if licence_type not in VALID_MONTHS:
+            raise HTTPException(status_code=422, detail="Enter the date the licence expires.")
+        # a quarterly licence runs three months from its issue date (or from today)
+        expiry_date = add_months(issue_date or local_today(), VALID_MONTHS[licence_type])
     if issue_date and issue_date > expiry_date:
         raise HTTPException(status_code=422, detail="The issue date must be before the expiry date.")
     lic = SiteLicence(site_id=site.id, licence_type=licence_type, expiry_date=expiry_date, issue_date=issue_date,
@@ -163,6 +180,8 @@ def correct_licence(
     if not lic:
         raise HTTPException(status_code=404, detail="Licence not found")
     assert_site_access(current_user, lic.site_id)
+    if not may_upload(current_user, lic.licence_type):
+        raise HTTPException(status_code=403, detail=f"{LICENCE_TYPES[lic.licence_type][0]}s are kept by the SHE team.")
     if expiry_date and expiry_date != lic.expiry_date:
         lic.expiry_date = expiry_date
         lic.reminded_90 = lic.reminded_30 = lic.reminded_expired = None

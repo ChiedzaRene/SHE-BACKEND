@@ -20,7 +20,7 @@ from models.inspections import Inspection
 from models.site_licence import SiteLicence
 from models.site import Site
 from models.training import Training
-from services.licences import LICENCE_TYPES, status_of
+from services.licences import LICENCE_TYPES, status_label, status_of
 from services.richtext import as_text
 from services.settings import get_safety_limits
 from services.safety_metrics import (
@@ -31,8 +31,6 @@ from services.safety_metrics import (
 )
 
 NA = "N/A"
-LICENCE_STATUS = {"expired": "Expired", "missing": "Not recorded", "due_1_month": "Due within a month",
-                  "due_3_months": "Due within 3 months"}
 MAX_REGISTER_ROWS = 5000
 ACTION_DONE = ("resolved", "closed")
 
@@ -228,13 +226,13 @@ def compliance_report(db: Session, site_id: Optional[int]) -> dict:
     for sid, name in names.items():
         for key, (lic_name, _issuer) in LICENCE_TYPES.items():
             lic = current.get((sid, key))
-            status = status_of(lic.expiry_date if lic else None, today)
+            status = status_of(lic.expiry_date if lic else None, today, key)
             if status in ("expired", "missing"):
                 bad += 1
             elif status != "valid":
                 expiring += 1
             if status != "valid":
-                licence_rows.append([name, lic_name, LICENCE_STATUS[status],
+                licence_rows.append([name, lic_name, status_label(status, key),
                                      _day(lic.expiry_date) if lic else "",
                                      (lic.expiry_date - today).days if lic else ""])
     licence_rows.sort(key=lambda r: (r[4] == "", r[4] if r[4] != "" else 0))
