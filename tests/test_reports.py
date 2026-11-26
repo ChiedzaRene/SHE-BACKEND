@@ -134,7 +134,7 @@ def test_compliance_report(client, auth):
     doc = client.get("/reports/compliance?site_id=70", headers=auth["she"]).json()
     k = kpis(doc)
     assert k["Audits on record"] == "2" and k["Average audit score"] == "70.0" and k["Open audits"] == "1"
-    assert k["Licences: expired / not recorded"] == "4"   # air emission expired; three types not recorded
+    assert k["Licences: expired / not recorded"] == "5"   # air emission expired; four types (EIA too) not recorded
     assert k["Licences: due within 3 months"] == "1"
     assert k["Training coverage"] == "80%"
     rows = table(doc, "Licences needing attention")["rows"]

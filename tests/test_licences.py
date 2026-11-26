@@ -22,11 +22,15 @@ def _notes(user_id, kind):
         db.close()
 
 
-def test_the_six_licence_types(client):
-    names = [t["name"] for t in client.get("/licences/types").json()]
-    assert names == ["Council shop licence", "Fire brigade licence", "EMA septic tank waste discharge licence",
-                     "EMA air emission licence", "Hazardous substance storage and sale licence",
-                     "Council trade effluent licence"]
+def test_the_licence_types(client):
+    types = client.get("/licences/types").json()
+    assert [t["name"] for t in types] == [
+        "Council shop licence", "Fire brigade licence", "EMA septic tank waste discharge licence",
+        "EMA air emission licence", "Hazardous substance storage and sale licence",
+        "Council trade effluent licence", "Environmental Impact Assessment (EIA) licence"]
+    eia = types[-1]
+    assert eia["valid_months"] == 3 and eia["she_only"] is True and eia["reminder_days"] == [30, 14]
+    assert types[0]["reminder_days"] == [90, 30] and types[0]["she_only"] is False
 
 
 def test_status_bands():
@@ -96,3 +100,59 @@ def test_correcting_the_due_date_restarts_reminders(client, auth):
     assert fixed["status"] == "valid"
     assert client.delete(f"/licences/{lic['id']}", headers=auth["mgr"]).status_code == 403
     assert client.delete(f"/licences/{lic['id']}", headers=auth["she"]).status_code == 200
+
+
+def test_eia_licences_are_quarterly_and_uploaded_by_the_she_team(client, auth):
+    # every site has one, shown as not recorded until the SHE team uploads it
+    reg = client.get("/licences/", headers=auth["mgr"]).json()
+    cell = next(c for c in reg["sites"][0]["licences"] if c["licence_type"] == "ema_eia")
+    assert cell["status"] == "missing" and cell["can_edit"] is False and cell["valid_months"] == 3
+
+    issued = TODAY - timedelta(days=10)
+    data = {"site_id": "1", "licence_type": "ema_eia", "issue_date": issued.isoformat()}
+    refused = client.post("/licences/", data=data, headers=auth["mgr"])
+    assert refused.status_code == 403 and "SHE team" in refused.json()["detail"]
+    lic = client.post("/licences/", data=data, headers=auth["she"])
+    assert lic.status_code == 201, lic.text
+    lic = lic.json()
+    from services.fire_inspections import add_months
+    assert lic["expiry_date"] == add_months(issued, 3).isoformat()      # filled in: three months on
+    assert client.put(f"/licences/{lic['id']}", data={"notes": "x"}, headers=auth["mgr"]).status_code == 403
+    she_cell = next(c for c in client.get("/licences/", headers=auth["she"]).json()["sites"][0]["licences"]
+                    if c["licence_type"] == "ema_eia")
+    assert she_cell["can_edit"] is True and she_cell["current"]["id"] == lic["id"]
+    # other licence types still need their expiry date
+    assert client.post("/licences/", data={"site_id": "1", "licence_type": "fire_brigade"},
+                       headers=auth["she"]).status_code == 422
+
+
+def test_eia_reminders_a_month_and_two_weeks_before_then_expired():
+    assert svc.status_of(TODAY + timedelta(days=60), TODAY, "ema_eia") == "valid"      # not "due in 3 months"
+    assert svc.status_of(TODAY + timedelta(days=30), TODAY, "ema_eia") == "due_3_months"
+    assert svc.status_of(TODAY + timedelta(days=14), TODAY, "ema_eia") == "due_1_month"
+    assert svc.status_label("due_3_months", "ema_eia") == "Due within a month"
+    assert svc.status_label("due_1_month", "ema_eia") == "Due within 2 weeks"
+    assert svc.status_label("due_3_months") == "Due within 3 months"
+
+    from models.site_licence import SiteLicence
+    db = SessionLocal()
+    try:
+        expiry = TODAY + timedelta(days=200)
+        lic = SiteLicence(site_id=1, licence_type="ema_eia", expiry_date=expiry, created_by=1)
+        db.add(lic)
+        db.commit()
+        before = len(_notes(4, "licence_due"))
+        svc.send_reminders(db, expiry - timedelta(days=60))                    # two months left: nothing
+        assert len(_notes(4, "licence_due")) == before
+        svc.send_reminders(db, expiry - timedelta(days=30))
+        assert "Environmental Impact Assessment (EIA) licence for Site A is due in a month" in _notes(4, "licence_due")
+        svc.send_reminders(db, expiry - timedelta(days=20))                    # not again
+        assert len(_notes(4, "licence_due")) == before + 1
+        svc.send_reminders(db, expiry - timedelta(days=14))
+        assert any("EIA) licence for Site A is due in 14 days" in t for t in _notes(4, "licence_due"))
+        svc.send_reminders(db, expiry + timedelta(days=1))
+        assert any("EIA" in t and "expired" in t for t in _notes(4, "licence_expired"))
+        db.delete(lic)
+        db.commit()
+    finally:
+        db.close()
