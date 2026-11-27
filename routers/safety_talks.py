@@ -88,7 +88,7 @@ async def submit_talk(
     if not week:
         raise HTTPException(
             status_code=409,
-            detail=f"Talks can only be submitted on Monday and Tuesday. The next window opens on "
+            detail=f"Talks can only be submitted from Sunday to the end of Tuesday. The next window opens on "
                    f"{next_open(today).strftime('%A %d %B').replace(' 0', ' ')}.",
         )
     title = " ".join(title.split())

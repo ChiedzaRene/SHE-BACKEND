@@ -1,5 +1,5 @@
-"""Weekly toolbox talks: Monday–Tuesday window, completion rate, missed-week alerts; SHE trainings with documents."""
-from datetime import date
+"""Weekly toolbox talks: Sunday–Tuesday window, completion rate, missed-week alerts; SHE trainings with documents."""
+from datetime import date, timedelta
 
 import pytest
 
@@ -38,17 +38,20 @@ def _submit(client, headers, title="Working at heights", attendees=12, name="reg
 
 def test_window_rules():
     assert svc.open_week(MON) == MON and svc.open_week(TUE) == MON and svc.open_week(WED) is None
-    assert svc.open_week(date(2026, 9, 20)) is None                      # Sunday
-    assert svc.next_open(WED) == date(2026, 9, 21) and svc.next_open(MON) == MON
+    assert svc.open_week(date(2026, 9, 13)) == MON                       # Sunday: the coming week is open
+    assert svc.open_week(date(2026, 9, 12)) is None                      # Saturday: not yet
+    assert svc.next_open(WED) == date(2026, 9, 20)                       # the next window opens on Sunday
+    assert svc.next_open(date(2026, 9, 20)) == date(2026, 9, 20)
     d = svc.deadline_of(MON)
     assert (d.date(), d.hour, d.minute) == (TUE, 23, 59)
     assert not svc.is_closed(MON, TUE) and svc.is_closed(MON, WED)
 
 
-def test_only_the_site_manager_submits_and_only_on_monday_or_tuesday(client, auth, monkeypatch):
+def test_only_the_site_manager_submits_and_only_from_sunday_to_tuesday(client, auth, monkeypatch):
     _on(monkeypatch, WED)
     closed = _submit(client, auth["mgr"])
-    assert closed.status_code == 409 and "Monday and Tuesday" in closed.json()["detail"]
+    assert closed.status_code == 409 and "from Sunday to the end of Tuesday" in closed.json()["detail"]
+    assert "Sunday 20 September" in closed.json()["detail"]
     _on(monkeypatch, TUE)
     assert _submit(client, auth["she"]).status_code == 403
     first = _submit(client, auth["mgr"], title="Fire extinguishers")
@@ -136,7 +139,7 @@ def test_current_week_for_the_manager(client, auth, monkeypatch):
     assert cur["deadline"].startswith("2026-09-15T23:59:59")
     _on(monkeypatch, WED)
     cur = client.get("/safety-talks/current", headers=auth["mgr"]).json()
-    assert cur["open"] is False and cur["next_open"] == "2026-09-21"
+    assert cur["open"] is False and cur["next_open"] == "2026-09-20"
     assert cur["cumulative"]["due"] >= 3
 
 
@@ -244,3 +247,18 @@ def test_a_site_added_on_tuesday_counts_that_weeks_talk():
     assert svc.site_start(site, date(2026, 8, 31)) == MON
     added_wednesday = Site(id=78, name="Wednesday Site", address="x", talks_from=WED)
     assert svc.site_start(added_wednesday, date(2026, 8, 31)) == TUE   # this week's window had closed
+
+
+def test_a_talk_can_be_sent_on_the_sunday_before_its_week(client, auth, monkeypatch):
+    sunday = date(2026, 9, 27)
+    _on(monkeypatch, sunday)
+    week = sunday + timedelta(days=1)
+    current = client.get("/safety-talks/current", headers=auth["mgr"]).json()
+    assert current["open"] is True and current["week_of"] == week.isoformat()
+    sent = _submit(client, auth["mgr"], title="Sunday briefing")
+    assert sent.status_code == 201, sent.text
+    assert sent.json()["week_of"] == week.isoformat()
+    # it counts as done straight away, and the week isn't missed
+    current = client.get("/safety-talks/current", headers=auth["mgr"]).json()
+    assert current["talk"]["title"] == "Sunday briefing"
+    assert week.isoformat() not in current["cumulative"]["missed_weeks"]
