@@ -1,8 +1,9 @@
 """Weekly toolbox talks: when they can be submitted, which weeks count, and who is told about missed ones.
 
 Rules
-  * Every site gives a talk each Monday. Its manager submits it (title, people present, a document)
-    from Monday until the end of Tuesday, local time. After that the week is closed for good.
+  * Every site gives a talk each week (the week is named by its Monday). Its manager submits it (title,
+    people present, a document) from the Sunday before until the end of Tuesday, local time. After that
+    the week is closed for good.
   * A week counts towards a site's completion rate once its window has closed, or as soon as the talk
     is in (so submitting early never lowers the rate, and an open week never counts as missed).
   * Weeks are counted from when tracking began (the first deploy with this feature), or from when the
@@ -35,13 +36,15 @@ def deadline_of(week_of: date) -> datetime:
 
 
 def open_week(today: date) -> Optional[date]:
-    """The week whose talk can be submitted today: Monday and Tuesday only."""
+    """The week whose talk can be submitted today: Sunday (the coming week), Monday and Tuesday."""
+    if today.weekday() == 6:
+        return today + timedelta(days=1)
     return monday_of(today) if today.weekday() in (0, 1) else None
 
 
 def next_open(today: date) -> date:
-    """The Monday the next submission window opens (today when it is Monday)."""
-    return today + timedelta(days=(7 - today.weekday()) % 7)
+    """The Sunday the next submission window opens (today when it is Sunday)."""
+    return today + timedelta(days=(6 - today.weekday()) % 7)
 
 
 def is_closed(week_of: date, today: date) -> bool:
@@ -76,7 +79,7 @@ def _mondays(start: date, end: date) -> List[date]:
 
 
 def site_start(site: Site, tracked_from: date) -> date:
-    """The first day whose Monday counts: a week counts if its window (Monday to Tuesday) was still open
+    """The first day whose Monday counts: a week counts if its window (Sunday to Tuesday) was still open
     when tracking began for the site, so a site added on a Tuesday is due that week's talk."""
     start = max(tracked_from, site.talks_from) if site.talks_from else tracked_from
     return start - timedelta(days=1)
@@ -99,7 +102,8 @@ def weeks_status(db: Session, sites: Iterable[Site], start: date, end: date, tod
     out = {}
     for site in sites:
         first = max(start, site_start(site, tracked_from))
-        weeks = [m for m in _mondays(first, min(end, today + timedelta(days=1)))]
+        # up to the week whose window is open (on Sunday that is tomorrow's week)
+        weeks = [m for m in _mondays(first, min(end, today + timedelta(days=2)))]
         done = [m for m in weeks if m in submitted[site.id]]
         missed = [m for m in weeks if is_closed(m, today) and m not in submitted[site.id]]
         due = len(done) + len(missed)
